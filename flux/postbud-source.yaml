@@ -1,0 +1,32 @@
+# Flux bootstrap for the postbud cluster. Applied once by hand; after
+# that, deploying is a commit.
+#
+# GitHub never pushes to this box and holds no credentials for it -- the
+# same pull model the homelab cluster uses, and the reason no CI runner
+# needs SSH access or a place on the tailnet. The repo is public, so the
+# source needs no secret either.
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: postbud
+  namespace: flux-system
+spec:
+  interval: 5m
+  url: https://github.com/bisand/postbud
+  ref:
+    branch: main
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: postbud
+  namespace: flux-system
+spec:
+  interval: 10m
+  path: ./deploy
+  prune: true
+  wait: true
+  timeout: 5m
+  sourceRef:
+    kind: GitRepository
+    name: postbud

@@ -82,20 +82,20 @@ pub async fn ingest(pool: &PgPool, raw: &str) -> anyhow::Result<Ingested> {
         .await
         .context("storing bounce report")?;
 
-        if report.should_suppress() {
-            if let Some(address) = &report.final_recipient {
-                // Global (null tenant): the mailbox is gone for everyone.
-                crate::suppression::add(
-                    pool,
-                    None,
-                    address,
-                    "hard_bounce",
-                    "dsn",
-                    report.diagnostic.as_deref(),
-                )
-                .await?;
-                out.suppressed += 1;
-            }
+        if report.should_suppress()
+            && let Some(address) = &report.final_recipient
+        {
+            // Global (null tenant): the mailbox is gone for everyone.
+            crate::suppression::add(
+                pool,
+                None,
+                address,
+                "hard_bounce",
+                "dsn",
+                report.diagnostic.as_deref(),
+            )
+            .await?;
+            out.suppressed += 1;
         }
     }
 
