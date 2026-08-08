@@ -7,13 +7,12 @@ resources:
   - postgres.yaml
   - postbud.yaml
 
-# The image tag lives here and nowhere else. Flux applies whatever this
-# says, so a deploy is a commit that changes one line -- and a rollback is
-# reverting it.
-# A release tag, never `latest`. With `latest` the tag never changes, so
-# Flux sees no diff and never redeploys -- the cluster silently sticks on
-# whatever it first pulled. Bumping this line is the deploy; reverting it
-# is the rollback.
+# The image tag lives here and nowhere else: bumping this line is the
+# deploy, reverting it is the rollback.
+#
+# Always a release tag, never `latest`. With `latest` the tag never
+# changes, so Flux sees no diff and never redeploys -- the cluster
+# silently sticks on whatever it first pulled.
 images:
   - name: postbud
     newName: ghcr.io/bisand/postbud
