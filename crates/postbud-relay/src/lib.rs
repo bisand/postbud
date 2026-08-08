@@ -155,7 +155,12 @@ fn build(claimed: &Claimed) -> anyhow::Result<Message> {
         // one unless told to. Deriving it from our own id also makes it a
         // third correlation handle: given a Message-ID from a recipient's
         // headers, the message row is a single lookup.
-        .message_id(Some(format!("{}@postbud.bogentech.no", claimed.id)))
+        // The angle brackets are REQUIRED by RFC 5322, and lettre takes this
+        // value verbatim rather than adding them. Without them Gmail treats
+        // the header as malformed, discards it and stamps its own
+        // `SMTPIN_ADDED_BROKEN` id -- which is both a spam signal and a
+        // silent loss of the correlation handle. Found in production.
+        .message_id(Some(format!("<{}@postbud.bogentech.no>", claimed.id)))
         .subject(&claimed.subject);
 
     if let Some(reply_to) = &claimed.reply_to {
@@ -207,6 +212,39 @@ mod tests {
         assert_eq!(
             queue_id_from("2.0.0 Ok: queued as 4bXlNq2Qh8z1Yk").as_deref(),
             Some("4bXlNq2Qh8z1Yk")
+        );
+    }
+
+    fn claimed(id: uuid::Uuid) -> Claimed {
+        Claimed {
+            id,
+            attempts: 0,
+            mail_from: "faktura@regnmed.no".into(),
+            from_name: Some("regnmed".into()),
+            rcpt_to: "kunde@example.no".into(),
+            reply_to: None,
+            subject: "Faktura 1001".into(),
+            body_text: Some("Vedlagt.".into()),
+            body_html: None,
+            attachments: Vec::new(),
+        }
+    }
+
+    /// RFC 5322 requires the angle brackets, and lettre does not add them.
+    /// Emitting a bare id made Gmail discard the header and substitute
+    /// `SMTPIN_ADDED_BROKEN` -- a spam signal, and the loss of the handle
+    /// that ties a delivered message back to its row.
+    #[test]
+    fn message_id_is_wrapped_in_angle_brackets() {
+        let id = uuid::Uuid::new_v4();
+        let message = build(&claimed(id)).expect("building the message");
+        let raw = String::from_utf8_lossy(&message.formatted()).to_string();
+        assert!(
+            raw.contains(&format!("Message-ID: <{id}@postbud.bogentech.no>")),
+            "Message-ID must be bracketed; got:\n{}",
+            raw.lines()
+                .find(|l| l.starts_with("Message-ID"))
+                .unwrap_or("(absent)")
         );
     }
 

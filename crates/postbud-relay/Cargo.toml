@@ -13,4 +13,5 @@ postbud-db.workspace = true
 anyhow.workspace = true
 lettre.workspace = true
 sqlx.workspace = true
+uuid.workspace = true
 tokio.workspace = true

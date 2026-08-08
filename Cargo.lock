@@ -1240,6 +1240,7 @@ dependencies = [
  "postbud-db",
  "sqlx",
  "tokio",
+ "uuid",
 ]
 
 [[package]]
