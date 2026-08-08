@@ -1,0 +1,23 @@
+[package]
+name = "postbud-cli"
+description = "The postbud binary: migrate, serve, worker, tenant administration, bounce ingestion"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "postbud"
+path = "src/main.rs"
+
+[dependencies]
+postbud-api.workspace = true
+postbud-db.workspace = true
+postbud-relay.workspace = true
+
+anyhow.workspace = true
+axum.workspace = true
+clap.workspace = true
+dotenvy.workspace = true
+sqlx.workspace = true
+tokio.workspace = true

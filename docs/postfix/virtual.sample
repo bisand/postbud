@@ -1,0 +1,21 @@
+# /etc/postfix/virtual -- run `postmap /etc/postfix/virtual` after editing.
+#
+# "We will not receive any mail" cannot be literally true for a sending
+# relay. Three things arrive no matter how one-directional the sending is,
+# and none of them is optional:
+#
+#   1. Bounces (DSNs). Without them there is no suppression list, dead
+#      addresses are mailed forever, and the IP reputation pays for it.
+#   2. abuse@ and postmaster@ (RFC 2142). Microsoft's JMRP and Google
+#      Postmaster Tools both expect a reachable abuse mailbox, and the
+#      AUP generally requires one.
+#   3. DMARC aggregate reports, which are the entire point of starting at
+#      p=none.
+#
+# Every address NOT listed here is rejected at RCPT time, before any content
+# is accepted. That is what keeps this host free of a filtering stack.
+
+bounces@bogentech.no      postbud-bounce:
+abuse@bogentech.no        admin@example.com
+postmaster@bogentech.no   admin@example.com
+dmarc@bogentech.no        admin@example.com

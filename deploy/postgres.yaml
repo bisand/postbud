@@ -1,0 +1,86 @@
+# Postgres for postbud.
+#
+# A StatefulSet with one replica on k3s local-path storage. This is a
+# single-node cluster on a 2 GB box: replication would be theatre, and the
+# real durability story is the nightly pg_dump plus the fact that a lost
+# queue is at worst a few minutes of unsent mail, not lost ledger data.
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: postbud
+spec:
+  clusterIP: None
+  selector:
+    app: postgres
+  ports:
+    - port: 5432
+      targetPort: 5432
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: postbud
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:18-alpine
+          args:
+            # Tuned for a small box, not for throughput. postbud's load is
+            # a few hundred rows a day.
+            - -c
+            - shared_buffers=64MB
+            - -c
+            - max_connections=50
+          env:
+            - name: POSTGRES_USER
+              value: postbud
+            - name: POSTGRES_DB
+              value: postbud
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  # Its own secret, not postbud-secrets: that one is
+                  # consumed with envFrom, and every key in it lands in
+                  # postbud's environment. The database superuser password
+                  # has no business being there.
+                  name: postbud-db
+                  key: POSTGRES_PASSWORD
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          ports:
+            - containerPort: 5432
+          resources:
+            requests:
+              memory: 128Mi
+              cpu: 50m
+            limits:
+              memory: 384Mi
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "postbud"]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: local-path
+        resources:
+          requests:
+            storage: 10Gi

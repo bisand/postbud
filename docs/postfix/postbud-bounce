@@ -1,0 +1,27 @@
+#!/bin/sh
+# /usr/local/bin/postbud-bounce -- invoked by Postfix's pipe transport.
+#
+# Reads a raw DSN on stdin and hands it to postbud over the tailnet.
+#
+# Exit codes matter here. Postfix reads them as delivery outcomes, so a
+# non-zero exit means the DSN is REQUEUED and retried rather than lost --
+# which is what we want when postbud or the network is briefly down. Never
+# `exit 0` on failure: it would tell Postfix the bounce was handled and
+# throw away the only copy.
+#
+# 75 = EX_TEMPFAIL, which Postfix treats as "try again later".
+
+set -eu
+
+RAW=$(cat)
+
+if [ -z "$RAW" ]; then
+    echo "postbud-bounce: empty input" >&2
+    exit 75
+fi
+
+# postbud runs in the cluster; this is its tailnet address. Bounce
+# ingestion is deliberately a separate, unauthenticated-by-network-location
+# path rather than an API key on disk on the relay host: the relay holds no
+# credentials at all, so losing the VM costs an IP, not a secret.
+printf '%s' "$RAW" | /usr/local/bin/postbud bounce-ingest || exit 75

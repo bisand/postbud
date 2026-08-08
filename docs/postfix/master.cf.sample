@@ -1,0 +1,18 @@
+# Additions to master.cf. Append these to the stock file; do not replace it.
+#
+# The pipe transport is how a bounce becomes a suppression. Postfix hands
+# the raw DSN to `postbud bounce-ingest` on stdin, which stores it and, for
+# a permanent failure only, adds the address to the suppression list.
+
+postbud-bounce  unix  -       n       n       -       -       pipe
+  flags=Rq user=postbud null_sender=
+  argv=/usr/local/bin/postbud-bounce ${sender} ${recipient}
+
+# Notes on the flags, because each one is load-bearing:
+#
+#   flags=R        prepend a Return-Path header
+#   flags=q        quote the addresses -- without it, an address containing
+#                  shell metacharacters is a command injection
+#   null_sender=   deliver DSNs, whose envelope sender is empty by design;
+#                  without this Postfix refuses to run the pipe for them
+#   user=postbud   an unprivileged account that owns nothing but this

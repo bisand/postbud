@@ -1,0 +1,16 @@
+[package]
+name = "postbud-relay"
+description = "Hands accepted messages to the Postfix smarthost, and the worker loop that drives it"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+postbud-core.workspace = true
+postbud-db.workspace = true
+
+anyhow.workspace = true
+lettre.workspace = true
+sqlx.workspace = true
+tokio.workspace = true

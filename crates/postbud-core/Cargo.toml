@@ -1,0 +1,11 @@
+[package]
+name = "postbud-core"
+description = "Pure delivery policy for postbud: addresses, retry schedule, DSN parsing, tenant authorization"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+rand.workspace = true
+sha2.workspace = true

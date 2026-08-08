@@ -1,0 +1,25 @@
+# Local development database.
+#
+# Port 5434, deliberately: regnmed's dev database already holds 5433 and
+# the two are often up at once.
+services:
+  db:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: postbud
+      POSTGRES_PASSWORD: postbud
+      POSTGRES_DB: postbud
+    ports:
+      - "5434:5432"
+    volumes:
+      # postgres:18+ stores data in a major-version subdirectory and
+      # refuses to start if the mount sits at the old data path.
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postbud"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:

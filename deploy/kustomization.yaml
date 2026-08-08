@@ -1,0 +1,16 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: postbud
+
+resources:
+  - namespace.yaml
+  - postgres.yaml
+  - postbud.yaml
+
+# The image tag lives here and nowhere else. Flux applies whatever this
+# says, so a deploy is a commit that changes one line -- and a rollback is
+# reverting it.
+images:
+  - name: postbud
+    newName: ghcr.io/bisand/postbud
+    newTag: latest

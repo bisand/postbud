@@ -1,0 +1,158 @@
+# postbud: the API and the delivery worker.
+#
+# Two Deployments, not one with two containers. They fail independently:
+# the API must keep accepting mail while the relay is unreachable, and the
+# worker must be restartable without dropping requests.
+apiVersion: v1
+kind: Service
+metadata:
+  name: postbud-api
+  namespace: postbud
+spec:
+  type: NodePort
+  selector:
+    app: postbud-api
+  ports:
+    - port: 8080
+      targetPort: 8080
+      # Fixed so the host's bounce pipe has a stable address to POST to.
+      # Reachable only from loopback and the tailnet -- the host firewall
+      # drops it from anywhere else.
+      nodePort: 30080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postbud-api
+  namespace: postbud
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postbud-api
+  template:
+    metadata:
+      labels:
+        app: postbud-api
+    spec:
+      initContainers:
+        # Idempotent, and running it on every rollout means a deploy can
+        # never reach a pod whose schema is older than its code.
+        - name: migrate
+          image: postbud
+          args: ["migrate"]
+          envFrom:
+            - secretRef:
+                name: postbud-secrets
+      containers:
+        - name: api
+          image: postbud
+          args: ["serve"]
+          env:
+            - name: BIND_ADDR
+              value: "0.0.0.0:8080"
+          envFrom:
+            - secretRef:
+                name: postbud-secrets
+          ports:
+            - containerPort: 8080
+          resources:
+            requests:
+              memory: 24Mi
+              cpu: 20m
+            limits:
+              memory: 128Mi
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postbud-worker
+  namespace: postbud
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postbud-worker
+  template:
+    metadata:
+      labels:
+        app: postbud-worker
+    spec:
+      containers:
+        - name: worker
+          image: postbud
+          args: ["worker"]
+          env:
+            # The Postfix relay runs on the host. 10.42.0.1 is the cni0
+            # bridge -- the host as a pod sees it. Traffic never leaves
+            # the box, which is why TLS is off on this hop; the DKIM
+            # signature is applied on the far side by OpenDKIM.
+            - name: RELAY_HOST
+              value: "10.42.0.1"
+            - name: RELAY_PORT
+              value: "25"
+            - name: RELAY_TLS
+              value: "none"
+            - name: WORKER_BATCH
+              value: "20"
+            - name: WORKER_IDLE_MS
+              value: "2000"
+          envFrom:
+            - secretRef:
+                name: postbud-secrets
+          resources:
+            requests:
+              memory: 24Mi
+              cpu: 20m
+            limits:
+              memory: 128Mi
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: postbud-purge
+  namespace: postbud
+spec:
+  # Message bodies are personal data; the delivery record is not. This
+  # blanks bodies whose delivery is long finished.
+  schedule: "17 3 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: purge
+              image: postbud
+              args: ["purge"]
+              envFrom:
+                - secretRef:
+                    name: postbud-secrets
+              resources:
+                requests:
+                  memory: 16Mi
+                limits:
+                  memory: 64Mi

@@ -1,0 +1,95 @@
+# Postfix on the ServeTheWorld mail VM.
+#
+# This host does one job: hold the IP reputation and put mail on the wire.
+# It has no database, no application code and no state worth backing up
+# beyond /etc/postfix and the DKIM key. postbud, in the k3s cluster, owns
+# the queue, the suppression list and the delivery record.
+#
+# NOT a drop-in file -- read it, adapt the marked values, and check
+# `postconf -n` against it afterwards.
+
+# ---------------------------------------------------------------- identity
+
+myhostname = mail.bogentech.no
+mydomain = bogentech.no
+myorigin = $mydomain
+
+# The HELO name must match the PTR record, and the PTR must resolve back to
+# this name. Forward-confirmed reverse DNS is the cheapest reputation signal
+# there is, and the most commonly missed.
+smtp_helo_name = mail.bogentech.no
+
+# ------------------------------------------------------------ IPv4 only
+#
+# An IPv6 delivery from an address without its own FCrDNS is worse than no
+# IPv6 at all: Gmail rejects outright on missing reverse DNS over v6 where
+# it would merely have scored it over v4. Turn this on only once the v6
+# PTR is in place and verified.
+inet_protocols = ipv4
+
+# --------------------------------------------------- who may inject mail
+#
+# The tailnet address of the cluster, and nothing else. This is the whole
+# access-control model of the relay: postbud reaches it over Tailscale, so
+# the relay never needs to be reachable from the public internet for
+# submission, and no SASL credential crosses it.
+#
+# Replace with the actual tailnet CIDR. Do NOT add 0.0.0.0/0 "temporarily".
+mynetworks = 127.0.0.0/8, 100.64.0.0/10
+
+smtpd_relay_restrictions =
+    permit_mynetworks
+    reject_unauth_destination
+
+# This host has no local users and no mailboxes. It relays for its own
+# networks and accepts bounces for its own domain; nothing else.
+mydestination = $myhostname, localhost
+local_recipient_maps =
+
+# ---------------------------------------------------------- outbound TLS
+#
+# Opportunistic: encrypt when the far end offers it, deliver anyway when it
+# does not. `encrypt` would be stricter and would also silently stop mail
+# to correspondents with broken TLS -- the wrong trade for transactional
+# mail that must arrive.
+smtp_tls_security_level = may
+smtp_tls_loglevel = 1
+smtp_tls_CApath = /etc/ssl/certs
+smtp_tls_session_cache_database = btree:${data_directory}/smtp_scache
+
+# ------------------------------------------------------------- inbound TLS
+smtpd_tls_security_level = may
+smtpd_tls_cert_file = /etc/letsencrypt/live/mail.bogentech.no/fullchain.pem
+smtpd_tls_key_file = /etc/letsencrypt/live/mail.bogentech.no/privkey.pem
+
+# ----------------------------------------------------------------- DKIM
+#
+# OpenDKIM as a milter. The private key lives here and ONLY here -- not in
+# this repository, not in postbud, not in any Kubernetes secret.
+milter_default_action = accept
+milter_protocol = 6
+smtpd_milters = inet:127.0.0.1:8891
+non_smtpd_milters = inet:127.0.0.1:8891
+
+# ------------------------------------------------------- bounce handling
+#
+# Everything the world sends us that we actually want lands in one of these
+# addresses; see virtual.sample. Everything else is rejected at RCPT time,
+# before any content is accepted -- which is why this host needs no
+# antivirus and no spam filter, and fits in 2 GB with room to spare.
+virtual_alias_maps = hash:/etc/postfix/virtual
+
+# Postfix's own bounces come back to this address, and the pipe transport in
+# master.cf hands them to postbud.
+notify_classes = resource, software
+
+# --------------------------------------------------------------- limits
+#
+# Small on purpose. This relay serves two applications sending a few
+# hundred messages a day; a large default concurrency against an unknown
+# receiver looks like a burst and is scored accordingly.
+default_destination_concurrency_limit = 5
+smtp_destination_rate_delay = 1s
+maximal_queue_lifetime = 1d
+bounce_queue_lifetime = 1d
+message_size_limit = 26214400

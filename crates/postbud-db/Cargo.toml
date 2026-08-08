@@ -1,0 +1,20 @@
+[package]
+name = "postbud-db"
+description = "PostgreSQL persistence for postbud: queue, suppression list and delivery history"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+postbud-core.workspace = true
+
+anyhow.workspace = true
+chrono.workspace = true
+sha2.workspace = true
+sqlx.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+dotenvy.workspace = true
+tokio.workspace = true
