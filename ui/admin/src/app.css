@@ -1,5 +1,13 @@
 @import "tailwindcss";
-@plugin "daisyui";
+@plugin "daisyui" {
+  themes:
+    light --default,
+    dark --prefersdark,
+    dim,
+    nord,
+    corporate,
+    sunset;
+}
 
 /* dist/ is checked in and lives next to src/. Without this exclusion
    Tailwind's source detection scans the previous build's output for class

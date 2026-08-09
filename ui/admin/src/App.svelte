@@ -1,5 +1,7 @@
 <script>
   import { auth, api } from "./lib/api.svelte.js";
+  import { icons } from "./lib/icons.js";
+  import { THEMES, themePref, apply as applyTheme } from "./lib/theme.svelte.js";
   import Dashboard from "./lib/Dashboard.svelte";
   import Messages from "./lib/Messages.svelte";
   import Suppressions from "./lib/Suppressions.svelte";
@@ -13,6 +15,9 @@
     { id: "tenants", label: "Tenants", component: Tenants },
     { id: "bounces", label: "Bounces", component: Bounces },
   ];
+
+  // The stored theme is applied before first paint of anything below.
+  applyTheme();
 
   let section = $state(location.hash.slice(1) || "dashboard");
   $effect(() => {
@@ -50,6 +55,22 @@
   );
 </script>
 
+{#snippet themePicker()}
+  <label class="flex items-center gap-2 px-1">
+    <span class="opacity-70 shrink-0">{@html icons.theme}</span>
+    <select
+      class="select select-bordered select-sm grow min-w-0"
+      aria-label="Theme"
+      value={themePref.value}
+      onchange={(e) => themePref.set(e.target.value)}
+    >
+      {#each THEMES as t (t)}
+        <option value={t}>{t}</option>
+      {/each}
+    </select>
+  </label>
+{/snippet}
+
 {#if !auth.token}
   <div class="min-h-screen flex items-center justify-center bg-base-200 p-4">
     <div class="card bg-base-100 border border-base-300 w-full max-w-sm">
@@ -75,30 +96,51 @@
           {#if checking}<span class="loading loading-spinner loading-sm"></span>{/if}
           Sign in
         </button>
+        <div class="text-sm">{@render themePicker()}</div>
       </form>
     </div>
   </div>
 {:else}
-  <div class="min-h-screen bg-base-200">
-    <div class="navbar bg-base-100 shadow-sm px-4">
-      <div class="flex-1 flex items-center gap-6">
-        <span class="text-lg font-bold">postbud</span>
-        <nav class="flex gap-1 overflow-x-auto">
-          {#each sections as s (s.id)}
-            <a
-              href={"#" + s.id}
-              class="btn btn-sm {section === s.id ? 'btn-primary' : 'btn-ghost'}"
-            >
-              {s.label}
-            </a>
-          {/each}
-        </nav>
+  <div class="min-h-screen flex bg-base-200">
+    <!-- Vertical menu. Icons always; labels from sm up. -->
+    <aside
+      class="w-14 sm:w-52 shrink-0 bg-base-100 border-r border-base-300
+             flex flex-col sticky top-0 h-screen"
+    >
+      <div class="px-3 py-4 flex items-center gap-2">
+        <span class="text-primary">{@html icons.dashboard}</span>
+        <span class="text-lg font-bold hidden sm:inline">postbud</span>
       </div>
-      <button class="btn btn-ghost btn-sm" onclick={() => auth.clear()}>
-        Sign out
-      </button>
-    </div>
-    <main class="p-4 max-w-6xl mx-auto">
+
+      <nav class="flex flex-col gap-1 px-2 grow">
+        {#each sections as s (s.id)}
+          <a
+            href={"#" + s.id}
+            title={s.label}
+            class="btn btn-sm justify-start gap-3 {section === s.id
+              ? 'btn-primary'
+              : 'btn-ghost'}"
+          >
+            {@html icons[s.id]}
+            <span class="hidden sm:inline">{s.label}</span>
+          </a>
+        {/each}
+      </nav>
+
+      <div class="p-2 flex flex-col gap-2 border-t border-base-300 text-sm">
+        <div class="hidden sm:block">{@render themePicker()}</div>
+        <button
+          class="btn btn-ghost btn-sm justify-start gap-3"
+          title="Sign out"
+          onclick={() => auth.clear()}
+        >
+          {@html icons.signout}
+          <span class="hidden sm:inline">Sign out</span>
+        </button>
+      </div>
+    </aside>
+
+    <main class="p-4 grow max-w-6xl min-w-0">
       <Active />
     </main>
   </div>
