@@ -76,15 +76,14 @@ impl OidcAdmin {
         let issuer = issuer.trim_end_matches('/').to_string();
         let client_id = std::env::var("ADMIN_OIDC_CLIENT_ID")
             .context("ADMIN_OIDC_ISSUER is set but ADMIN_OIDC_CLIENT_ID is not")?;
+        // Bootstrap-only: once the admin-user table has rows, this list
+        // is inert and can be dropped from the environment entirely.
         let users: Vec<String> = std::env::var("ADMIN_OIDC_USERS")
-            .context("ADMIN_OIDC_ISSUER is set but ADMIN_OIDC_USERS is not")?
+            .unwrap_or_default()
             .split(',')
             .map(|u| u.trim().to_string())
             .filter(|u| !u.is_empty())
             .collect();
-        if users.is_empty() {
-            return Err(anyhow!("ADMIN_OIDC_USERS must name at least one admin"));
-        }
 
         let jwks_static = match std::env::var("ADMIN_OIDC_JWKS_FILE") {
             Ok(path) => {
@@ -171,10 +170,13 @@ impl OidcAdmin {
         Ok(set)
     }
 
-    /// Validate an id_token and check the allowlist. Any failure is one
-    /// error kind — a caller probing the gate learns nothing about which
-    /// check refused them.
-    pub async fn verify(&self, token: &str) -> Result<(), ()> {
+    /// Validate an id_token: signature against the issuer's JWKS, iss,
+    /// aud = our client id, exp. Authentication ONLY — who this identity
+    /// may act as is decided by the admin-user table (or, while it is
+    /// empty, the env allowlist), never here. Any failure is one error
+    /// kind — a caller probing the gate learns nothing about which check
+    /// refused them.
+    pub async fn verify(&self, token: &str) -> Result<Identity, ()> {
         let header = decode_header(token).map_err(|_| ())?;
         let kid = header.kid.ok_or(())?;
 
@@ -194,14 +196,37 @@ impl OidcAdmin {
             .map_err(|_| ())?
             .claims;
 
-        let allowed = self.users.iter().any(|u| {
-            u == &claims.sub
-                || claims
+        Ok(Identity {
+            sub: claims.sub,
+            email: claims.email,
+        })
+    }
+
+    /// Is this identity on the ENVIRONMENT allowlist? Only consulted
+    /// while the admin-user table is empty — the bootstrap window.
+    pub fn env_allowlisted(&self, identity: &Identity) -> bool {
+        self.users.iter().any(|u| {
+            u == &identity.sub
+                || identity
                     .email
                     .as_deref()
                     .is_some_and(|e| e.eq_ignore_ascii_case(u))
-        });
-        if allowed { Ok(()) } else { Err(()) }
+        })
+    }
+}
+
+/// An authenticated (not yet authorized) identity from a verified token.
+#[derive(Debug, Clone)]
+pub struct Identity {
+    pub sub: String,
+    pub email: Option<String>,
+}
+
+impl Identity {
+    /// The name audit fields carry: the email when there is one, the
+    /// subject id otherwise.
+    pub fn actor(&self) -> &str {
+        self.email.as_deref().unwrap_or(&self.sub)
     }
 }
 

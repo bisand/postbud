@@ -10,6 +10,7 @@
 //! it in Rust would be trading decades of edge cases for a weekend.
 
 pub mod admin;
+pub mod admin_user;
 pub mod bounce;
 pub mod message;
 pub mod suppression;
