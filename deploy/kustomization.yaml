@@ -16,4 +16,4 @@ resources:
 images:
   - name: postbud
     newName: ghcr.io/bisand/postbud
-    newTag: v0.4.0
+    newTag: v0.4.1
