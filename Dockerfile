@@ -5,6 +5,11 @@ FROM rust:alpine AS builder
 RUN apk add --no-cache musl-dev
 WORKDIR /src
 COPY . .
+# The version the binary identifies as (shown in the admin UI). Set from
+# the git tag by the images workflow; cargo tracks the env dependency,
+# so a changed version re-links.
+ARG POSTBUD_VERSION
+ENV POSTBUD_VERSION=${POSTBUD_VERSION}
 RUN cargo build --release -p postbud-cli
 
 FROM scratch

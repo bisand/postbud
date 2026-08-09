@@ -87,9 +87,9 @@ function randomString(length) {
 
 const redirectUri = () => location.origin + "/admin";
 
-export async function fetchOidcConfig() {
-  const res = await fetch("/admin/api/oidc/config");
-  if (!res.ok) return { enabled: false };
+export async function fetchConfig() {
+  const res = await fetch("/admin/api/config");
+  if (!res.ok) return { version: "", oidc: { enabled: false } };
   return res.json();
 }
 

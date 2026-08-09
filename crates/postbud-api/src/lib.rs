@@ -38,6 +38,13 @@ pub struct AppState {
     pub admin_oidc: Option<std::sync::Arc<oidc::OidcAdmin>>,
 }
 
+/// The version this binary identifies as. Baked in at image build from
+/// the git tag (`POSTBUD_VERSION`); a local cargo build says so instead
+/// of impersonating a release.
+pub fn version() -> &'static str {
+    option_env!("POSTBUD_VERSION").unwrap_or(concat!("v", env!("CARGO_PKG_VERSION"), "-dev"))
+}
+
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/healthz", get(healthz))

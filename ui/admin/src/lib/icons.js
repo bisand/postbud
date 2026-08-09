@@ -8,6 +8,17 @@ const svg = (paths) =>
         stroke-linejoin="round" width="20" height="20">${paths}</svg>`;
 
 export const icons = {
+  // The mark: an envelope on the move — a mail carrier's whole job.
+  // Slightly larger than the section icons; the speed lines are what
+  // make it read as "delivery", not "inbox".
+  logo:
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"' +
+    ' stroke="currentColor" stroke-width="1.8" stroke-linecap="round"' +
+    ' stroke-linejoin="round" width="26" height="26">' +
+    '<rect x="7" y="6" width="14.5" height="11.5" rx="2"/>' +
+    '<path d="M7.5 7.5l6.75 5 6.75-5"/>' +
+    '<path d="M2 9.25h3.5"/><path d="M0.9 12h4.6"/><path d="M2 14.75h3.5"/>' +
+    "</svg>",
   // Four tiles.
   dashboard: svg(
     '<rect x="3.5" y="3.5" width="7" height="7" rx="1.5"/>' +

@@ -1,6 +1,6 @@
 <script>
   import { auth, api, me } from "./lib/api.svelte.js";
-  import { fetchOidcConfig, beginLogin, completeLogin } from "./lib/oidc.js";
+  import { fetchConfig, beginLogin, completeLogin } from "./lib/oidc.js";
   import { icons } from "./lib/icons.js";
   import { THEMES, themePref, apply as applyTheme } from "./lib/theme.svelte.js";
   import Dashboard from "./lib/Dashboard.svelte";
@@ -54,8 +54,9 @@
   let tokenInput = $state("");
   let loginError = $state("");
   let checking = $state(false);
-  let oidcCfg = $state(null);
+  let config = $state(null);
   let showTokenForm = $state(false);
+  const oidcCfg = $derived(config?.oidc ?? null);
 
   async function validateSession() {
     try {
@@ -66,7 +67,7 @@
         err.status === 503
           ? "The admin surface is not configured on the server."
           : err.status === 401 && oidcCfg?.enabled
-            ? "You are signed in, but this account is not on postbud's admin list."
+            ? "You are signed in, but this account has no access here."
             : "That token was not accepted.";
       return false;
     }
@@ -88,7 +89,7 @@
       } finally {
         checking = false;
       }
-      oidcCfg = await fetchOidcConfig();
+      config = await fetchConfig();
     })();
   });
 
@@ -126,9 +127,12 @@
   <div class="min-h-screen flex items-center justify-center bg-base-200 p-4">
     <div class="card bg-base-100 border border-base-300 w-full max-w-sm">
       <div class="card-body gap-4">
-        <div>
-          <h1 class="card-title text-2xl">postbud</h1>
-          <p class="text-sm opacity-70">outbound mail, administered</p>
+        <div class="flex items-center gap-3">
+          <span class="text-primary">{@html icons.logo}</span>
+          <div>
+            <h1 class="card-title text-2xl">postbud</h1>
+            <p class="text-sm opacity-70">outbound mail, administered</p>
+          </div>
         </div>
 
         {#if loginError}
@@ -177,6 +181,9 @@
         {/if}
 
         <div class="text-sm">{@render themePicker()}</div>
+        {#if config?.version}
+          <p class="text-xs opacity-50 text-center">{config.version}</p>
+        {/if}
       </div>
     </div>
   </div>
@@ -188,7 +195,7 @@
              flex flex-col sticky top-0 h-screen"
     >
       <div class="px-3 py-4 flex items-center gap-2">
-        <span class="text-primary">{@html icons.dashboard}</span>
+        <span class="text-primary">{@html icons.logo}</span>
         <span class="text-lg font-bold hidden sm:inline">postbud</span>
       </div>
 
@@ -223,6 +230,9 @@
           {@html icons.signout}
           <span class="hidden sm:inline">Sign out</span>
         </button>
+        {#if config?.version}
+          <p class="hidden sm:block px-2 text-xs opacity-50">{config.version}</p>
+        {/if}
       </div>
     </aside>
 

@@ -1311,7 +1311,7 @@ checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
 name = "postbud-api"
-version = "0.2.0"
+version = "0.4.1"
 dependencies = [
  "anyhow",
  "axum",
@@ -1336,7 +1336,7 @@ dependencies = [
 
 [[package]]
 name = "postbud-cli"
-version = "0.2.0"
+version = "0.4.1"
 dependencies = [
  "anyhow",
  "axum",
@@ -1351,7 +1351,7 @@ dependencies = [
 
 [[package]]
 name = "postbud-core"
-version = "0.2.0"
+version = "0.4.1"
 dependencies = [
  "rand 0.8.7",
  "sha2",
@@ -1359,7 +1359,7 @@ dependencies = [
 
 [[package]]
 name = "postbud-db"
-version = "0.2.0"
+version = "0.4.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1374,7 +1374,7 @@ dependencies = [
 
 [[package]]
 name = "postbud-relay"
-version = "0.2.0"
+version = "0.4.1"
 dependencies = [
  "anyhow",
  "lettre",

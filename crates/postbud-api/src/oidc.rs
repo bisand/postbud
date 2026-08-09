@@ -232,18 +232,25 @@ impl Identity {
 
 // ------------------------------------------------------------- endpoints
 
-/// `GET /admin/api/oidc/config` — unauthenticated: the login page needs
-/// it before anyone is logged in. Carries no secrets.
+/// `GET /admin/api/config` — unauthenticated: the login page needs it
+/// before anyone is logged in. Carries no secrets — the version and the
+/// OIDC parameters any relying-party redirect would reveal anyway.
 pub async fn config(State(state): State<AppState>) -> ApiResult<Json<serde_json::Value>> {
-    let Some(oidc) = &state.admin_oidc else {
-        return Ok(Json(serde_json::json!({ "enabled": false })));
+    let oidc = match &state.admin_oidc {
+        None => serde_json::json!({ "enabled": false }),
+        Some(oidc) => {
+            let discovery = oidc.discovery().await.map_err(ApiError::Internal)?;
+            serde_json::json!({
+                "enabled": true,
+                "issuer": oidc.issuer,
+                "client_id": oidc.client_id,
+                "authorization_endpoint": discovery.authorization_endpoint,
+            })
+        }
     };
-    let discovery = oidc.discovery().await.map_err(ApiError::Internal)?;
     Ok(Json(serde_json::json!({
-        "enabled": true,
-        "issuer": oidc.issuer,
-        "client_id": oidc.client_id,
-        "authorization_endpoint": discovery.authorization_endpoint,
+        "version": crate::version(),
+        "oidc": oidc,
     })))
 }
 
