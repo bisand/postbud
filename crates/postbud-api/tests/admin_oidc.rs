@@ -87,28 +87,15 @@ async fn get(app: axum::Router, bearer: &str) -> StatusCode {
 }
 
 #[tokio::test]
-async fn an_allowlisted_email_opens_the_gate() {
+async fn a_validly_signed_token_reaches_the_authorization_stage() {
+    // Authorization now lives in the admin-user table, so a valid token
+    // proceeds to the database — which is dead here. 500 = the signature,
+    // issuer, audience and expiry all passed; the refusal/authorization
+    // paths themselves are covered by the DB-backed tests
+    // (admin_roles_db) and by the pure allowlist tests below.
     let t = token(ISSUER, CLIENT_ID, "admin@example.com", 300);
     let status = get(app(&["admin@example.com"], None), &t).await;
-    // 500 = the dead pool: authentication and authorization both passed.
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
-}
-
-#[tokio::test]
-async fn the_allowlist_also_matches_the_subject() {
-    let t = token(ISSUER, CLIENT_ID, "whoever@example.com", 300);
-    let status = get(app(&["user-42"], None), &t).await;
-    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
-}
-
-#[tokio::test]
-async fn a_valid_token_for_a_user_not_on_the_allowlist_is_refused() {
-    // Authentication succeeds — the issuer really did vouch for this
-    // person — but authorization is postbud's decision, and this person
-    // is not on it.
-    let t = token(ISSUER, CLIENT_ID, "someone-else@example.com", 300);
-    let status = get(app(&["admin@example.com"], None), &t).await;
-    assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]
@@ -148,13 +135,27 @@ async fn the_static_token_still_works_beside_oidc() {
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
 }
 
+/// The BOOTSTRAP allowlist's matching rules, tested pure: email is
+/// case-insensitive, subject id is exact. (It only governs while the
+/// admin-user table is empty; the api-level behavior is covered in
+/// admin_roles_db.)
 #[tokio::test]
-async fn email_matching_is_case_insensitive_but_sub_matching_is_exact() {
-    let t = token(ISSUER, CLIENT_ID, "Admin@Example.COM", 300);
-    let status = get(app(&["admin@example.com"], None), &t).await;
-    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+async fn env_allowlist_matches_email_case_insensitively_and_sub_exactly() {
+    let oidc = postbud_api::oidc::OidcAdmin::with_static_jwks(
+        ISSUER,
+        CLIENT_ID,
+        &["admin@example.com", "user-42"],
+        &keys().1,
+    )
+    .unwrap();
 
-    let t = token(ISSUER, CLIENT_ID, "x@example.com", 300);
-    let status = get(app(&["USER-42"], None), &t).await;
-    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let id = |sub: &str, email: Option<&str>| postbud_api::oidc::Identity {
+        sub: sub.into(),
+        email: email.map(String::from),
+    };
+
+    assert!(oidc.env_allowlisted(&id("x", Some("Admin@Example.COM"))));
+    assert!(oidc.env_allowlisted(&id("user-42", None)));
+    assert!(!oidc.env_allowlisted(&id("USER-42", None)), "sub is exact");
+    assert!(!oidc.env_allowlisted(&id("y", Some("other@example.com"))));
 }

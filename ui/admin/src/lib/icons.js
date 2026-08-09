@@ -36,6 +36,13 @@ export const icons = {
   bounces: svg(
     '<path d="M4 7h11a5 5 0 0 1 0 10H9"/>' + '<path d="M12 13.5L8.5 17l3.5 3.5"/>',
   ),
+  // Person with a key: user administration.
+  users: svg(
+    '<circle cx="10" cy="8" r="3.2"/>' +
+      '<path d="M4 20c0-3.3 2.7-5.5 6-5.5 1.2 0 2.3.3 3.2.8"/>' +
+      '<circle cx="17" cy="15.5" r="2.2"/>' +
+      '<path d="M18.6 17.1L21 19.5M19.8 18.3l1.4-1.4"/>',
+  ),
   // Door with arrow: sign out.
   signout: svg(
     '<path d="M13 4H6.5A1.5 1.5 0 0 0 5 5.5v13A1.5 1.5 0 0 0 6.5 20H13"/>' +

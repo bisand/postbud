@@ -25,6 +25,7 @@ tower-http.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+dotenvy.workspace = true
 rand.workspace = true
 # Generates the test RSA keypair at runtime, so no key material — not
 # even a fixture that protects nothing — is committed.

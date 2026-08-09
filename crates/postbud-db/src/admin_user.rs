@@ -84,13 +84,12 @@ pub async fn add(
 pub async fn end(pool: &PgPool, id: i64, ended_by: &str) -> anyhow::Result<bool> {
     let mut tx = pool.begin().await?;
 
-    let target = sqlx::query(
-        "select role from admin_user where id = $1 and ended_at is null for update",
-    )
-    .bind(id)
-    .fetch_optional(&mut *tx)
-    .await
-    .context("locking admin user")?;
+    let target =
+        sqlx::query("select role from admin_user where id = $1 and ended_at is null for update")
+            .bind(id)
+            .fetch_optional(&mut *tx)
+            .await
+            .context("locking admin user")?;
     let Some(target) = target else {
         return Ok(false);
     };

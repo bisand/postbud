@@ -54,24 +54,39 @@ pub fn router() -> Router<AppState> {
         )
         .route("/admin/api/bounces", get(bounces))
         .route("/admin/api/bounces/{id}/raw", get(bounce_raw))
+        .route("/admin/api/me", get(me))
+        .route("/admin/api/users", get(users).post(user_add))
+        .route("/admin/api/users/{id}/role", post(user_role))
+        .route("/admin/api/users/{id}", axum::routing::delete(user_end))
         .route("/admin/api/oidc/config", get(crate::oidc::config))
         .route("/admin/api/oidc/token", post(crate::oidc::exchange))
 }
 
 // ------------------------------------------------------------------- auth
 
-/// An authenticated admin. Same seam trick as [`crate::auth::Tenant`]:
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Role {
+    /// Everything, including minting keys and managing users.
+    Admin,
+    /// Sees everything, changes nothing.
+    Viewer,
+}
+
+/// An authenticated operator. Same seam trick as [`crate::auth::Tenant`]:
 /// adding this as a handler argument is what protects the route, so no
-/// admin endpoint can be added that forgets to check.
-pub struct Admin;
+/// admin endpoint can be added that forgets to check. Read endpoints
+/// take `Admin` (any role); MUTATING endpoints take [`AdminWrite`], so a
+/// viewer cannot change anything and no handler can forget to ask.
+pub struct Admin {
+    /// Who this is, for the audit fields: an email, a subject id, or
+    /// `admin-token`.
+    pub actor: String,
+    pub role: Role,
+}
 
-impl FromRequestParts<AppState> for Admin {
-    type Rejection = ApiError;
-
-    async fn from_request_parts(
-        parts: &mut Parts,
-        state: &AppState,
-    ) -> Result<Self, Self::Rejection> {
+impl Admin {
+    async fn resolve(parts: &mut Parts, state: &AppState) -> Result<Self, ApiError> {
         if state.admin_token.is_none() && state.admin_oidc.is_none() {
             return Err(ApiError::AdminDisabled);
         }
@@ -84,24 +99,79 @@ impl FromRequestParts<AppState> for Admin {
             .map(str::trim)
             .ok_or(ApiError::Unauthorized)?;
 
-        // Path 1: the static token. Compare digests, not strings: the
-        // comparison runs over two fixed 32-byte values, so its timing
-        // says nothing about where the first differing byte was.
+        // Path 1: the static token — always the admin role; it is the
+        // bootstrap and break-glass credential. Compare digests, not
+        // strings: two fixed 32-byte values, so the timing says nothing
+        // about where the first differing byte was.
         if let Some(configured) = state.admin_token.as_deref()
             && postbud_core::apikey::hash(presented) == postbud_core::apikey::hash(configured)
         {
-            return Ok(Admin);
+            return Ok(Admin {
+                actor: "admin-token".into(),
+                role: Role::Admin,
+            });
         }
 
-        // Path 2: an OIDC id_token — signature against the issuer's
-        // JWKS, iss/aud/exp, then the allowlist.
+        // Path 2: an OIDC id_token. The issuer authenticates (signature,
+        // iss, aud, exp); the admin-user TABLE authorizes. While the
+        // table is empty the environment allowlist governs — the
+        // bootstrap window — and the first row closes it.
         if let Some(oidc) = &state.admin_oidc
-            && oidc.verify(presented).await.is_ok()
+            && let Ok(identity) = oidc.verify(presented).await
         {
-            return Ok(Admin);
+            let (role, any_active) = postbud_db::admin_user::resolve(
+                &state.pool,
+                &identity.sub,
+                identity.email.as_deref(),
+            )
+            .await
+            .map_err(ApiError::Internal)?;
+            let role = match role.as_deref() {
+                Some("admin") => Some(Role::Admin),
+                Some("viewer") => Some(Role::Viewer),
+                Some(_) => None,
+                None if !any_active && oidc.env_allowlisted(&identity) => Some(Role::Admin),
+                None => None,
+            };
+            if let Some(role) = role {
+                return Ok(Admin {
+                    actor: identity.actor().to_string(),
+                    role,
+                });
+            }
         }
 
         Err(ApiError::Unauthorized)
+    }
+}
+
+impl FromRequestParts<AppState> for Admin {
+    type Rejection = ApiError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        Admin::resolve(parts, state).await
+    }
+}
+
+/// An operator allowed to CHANGE things. 403 for a viewer — distinct
+/// from 401, because the session is fine; the role is not.
+pub struct AdminWrite(pub Admin);
+
+impl FromRequestParts<AppState> for AdminWrite {
+    type Rejection = ApiError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        let admin = Admin::resolve(parts, state).await?;
+        if admin.role != Role::Admin {
+            return Err(ApiError::Forbidden);
+        }
+        Ok(AdminWrite(admin))
     }
 }
 
@@ -228,18 +298,20 @@ struct SuppressAdd {
 
 async fn suppress_add(
     State(state): State<AppState>,
-    _admin: Admin,
+    AdminWrite(admin): AdminWrite,
     Json(req): Json<SuppressAdd>,
 ) -> ApiResult<StatusCode> {
     let address = address::normalize(&req.address)
         .map_err(|err| ApiError::BadRequest(format!("address: {err}")))?;
 
+    // `source` is the actor: "blocked by andre@…" is an answer,
+    // "blocked by admin" is a shrug.
     suppression::add(
         &state.pool,
         req.tenant_id,
         &address,
         "manual",
-        "admin",
+        &admin.actor,
         req.detail.as_deref(),
     )
     .await?;
@@ -249,10 +321,10 @@ async fn suppress_add(
 
 async fn suppress_remove(
     State(state): State<AppState>,
-    _admin: Admin,
+    AdminWrite(admin): AdminWrite,
     Path(id): Path<i64>,
 ) -> ApiResult<StatusCode> {
-    if suppression::remove(&state.pool, id, "admin").await? {
+    if suppression::remove(&state.pool, id, &admin.actor).await? {
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err(ApiError::NotFound)
@@ -298,7 +370,7 @@ fn clean_domains(raw: &[String]) -> Result<Vec<String>, ApiError> {
 
 async fn tenant_create(
     State(state): State<AppState>,
-    _admin: Admin,
+    AdminWrite(_admin): AdminWrite,
     Json(req): Json<TenantCreate>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let name = req.name.trim();
@@ -321,7 +393,7 @@ async fn tenant_create(
 
 async fn tenant_rotate(
     State(state): State<AppState>,
-    _admin: Admin,
+    AdminWrite(_admin): AdminWrite,
     Path(id): Path<Uuid>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let key = tenant::rotate_key(&state.pool, id)
@@ -337,7 +409,7 @@ struct TenantActive {
 
 async fn tenant_active(
     State(state): State<AppState>,
-    _admin: Admin,
+    AdminWrite(_admin): AdminWrite,
     Path(id): Path<Uuid>,
     Json(req): Json<TenantActive>,
 ) -> ApiResult<StatusCode> {
@@ -355,7 +427,7 @@ struct TenantDomains {
 
 async fn tenant_domains(
     State(state): State<AppState>,
-    _admin: Admin,
+    AdminWrite(_admin): AdminWrite,
     Path(id): Path<Uuid>,
     Json(req): Json<TenantDomains>,
 ) -> ApiResult<StatusCode> {
@@ -364,6 +436,105 @@ async fn tenant_domains(
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err(ApiError::NotFound)
+    }
+}
+
+// ------------------------------------------------------------------ users
+
+/// `GET /admin/api/me` — who am I, and what may I do. The UI uses it to
+/// hide controls a viewer cannot use; the SERVER enforcement lives in
+/// [`AdminWrite`], never here.
+async fn me(admin: Admin) -> Json<serde_json::Value> {
+    Json(serde_json::json!({ "actor": admin.actor, "role": admin.role }))
+}
+
+async fn users(
+    State(state): State<AppState>,
+    _admin: Admin,
+    Query(q): Query<UsersQuery>,
+) -> ApiResult<Json<Vec<postbud_db::admin_user::AdminUser>>> {
+    Ok(Json(
+        postbud_db::admin_user::list(&state.pool, q.include_ended).await?,
+    ))
+}
+
+#[derive(Debug, Deserialize)]
+struct UsersQuery {
+    #[serde(default)]
+    include_ended: bool,
+}
+
+fn valid_role(role: &str) -> Result<(), ApiError> {
+    match role {
+        "admin" | "viewer" => Ok(()),
+        other => Err(ApiError::BadRequest(format!(
+            "unknown role '{other}' (admin or viewer)"
+        ))),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct UserAdd {
+    /// An email (matched case-insensitively against the id_token's
+    /// `email`) or an OIDC subject id.
+    identifier: String,
+    role: String,
+    note: Option<String>,
+}
+
+async fn user_add(
+    State(state): State<AppState>,
+    AdminWrite(admin): AdminWrite,
+    Json(req): Json<UserAdd>,
+) -> ApiResult<Json<postbud_db::admin_user::AdminUser>> {
+    let identifier = req.identifier.trim();
+    if identifier.is_empty() {
+        return Err(ApiError::BadRequest("identifier is required".into()));
+    }
+    valid_role(&req.role)?;
+
+    let user = postbud_db::admin_user::add(
+        &state.pool,
+        identifier,
+        &req.role,
+        req.note.as_deref(),
+        &admin.actor,
+    )
+    .await
+    .map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    Ok(Json(user))
+}
+
+#[derive(Debug, Deserialize)]
+struct UserRole {
+    role: String,
+}
+
+async fn user_role(
+    State(state): State<AppState>,
+    AdminWrite(admin): AdminWrite,
+    Path(id): Path<i64>,
+    Json(req): Json<UserRole>,
+) -> ApiResult<StatusCode> {
+    valid_role(&req.role)?;
+    match postbud_db::admin_user::set_role(&state.pool, id, &req.role, &admin.actor).await {
+        Ok(true) => Ok(StatusCode::NO_CONTENT),
+        Ok(false) => Err(ApiError::NotFound),
+        // The last-admin rule surfaces as a message the operator can act
+        // on, not a 500.
+        Err(e) => Err(ApiError::BadRequest(e.to_string())),
+    }
+}
+
+async fn user_end(
+    State(state): State<AppState>,
+    AdminWrite(admin): AdminWrite,
+    Path(id): Path<i64>,
+) -> ApiResult<StatusCode> {
+    match postbud_db::admin_user::end(&state.pool, id, &admin.actor).await {
+        Ok(true) => Ok(StatusCode::NO_CONTENT),
+        Ok(false) => Err(ApiError::NotFound),
+        Err(e) => Err(ApiError::BadRequest(e.to_string())),
     }
 }
 

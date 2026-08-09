@@ -49,10 +49,15 @@ reputation checklist in [docs/dns.md](docs/dns.md).
   (`reject_unauth_destination`).
 - **The admin surface** (`/admin`, docs/architecture.md §9) authenticates
   two ways: OIDC login (issuer-configurable RP, code+PKCE, id_token
-  verified against the issuer's JWKS, authorization = the
-  `ADMIN_OIDC_USERS` allowlist — the token proves identity, postbud
+  verified against the issuer's JWKS — the token proves identity, postbud
   decides authorization) and `ADMIN_TOKEN` as the break-glass/machine
-  path. Neither set = honest 503; half-set OIDC fails at startup. The UI
+  path (always the admin role). Authorization lives in the `admin_user`
+  TABLE (Users section): roles `admin`/`viewer`, grants soft-ended never
+  deleted, last admin protected under row locks, `ADMIN_OIDC_USERS` env
+  allowlist governs ONLY while the table is empty. Read endpoints take
+  `Admin`, mutating ones `AdminWrite` — a viewer gets 403, and no
+  handler can forget. Audit fields carry the actor's name. Neither
+  credential set = honest 503; half-set OIDC fails at startup. The UI
   is Svelte 5 + daisyUI in `ui/admin/`, dist CHECKED IN and embedded via
   include_dir (cargo never needs node); rebuild with
   `scripts/build-ui.sh`, CI fails when dist drifts from source. Key

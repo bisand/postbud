@@ -20,6 +20,22 @@ export const auth = {
   },
 };
 
+// Who is signed in, and as what. Display only — the server enforces
+// roles in its extractors; hiding a button is courtesy, not security.
+let session = $state(null);
+
+export const me = {
+  get value() {
+    return session;
+  },
+  set(value) {
+    session = value;
+  },
+  get write() {
+    return session?.role === "admin";
+  },
+};
+
 export class ApiError extends Error {
   constructor(message, status) {
     super(message);

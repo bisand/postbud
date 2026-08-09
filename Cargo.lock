@@ -1317,6 +1317,7 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "chrono",
+ "dotenvy",
  "include_dir",
  "jsonwebtoken",
  "postbud-core",

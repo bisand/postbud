@@ -1,5 +1,5 @@
 <script>
-  import { auth, api } from "./lib/api.svelte.js";
+  import { auth, api, me } from "./lib/api.svelte.js";
   import { fetchOidcConfig, beginLogin, completeLogin } from "./lib/oidc.js";
   import { icons } from "./lib/icons.js";
   import { THEMES, themePref, apply as applyTheme } from "./lib/theme.svelte.js";
@@ -8,6 +8,7 @@
   import Suppressions from "./lib/Suppressions.svelte";
   import Tenants from "./lib/Tenants.svelte";
   import Bounces from "./lib/Bounces.svelte";
+  import Users from "./lib/Users.svelte";
 
   const sections = [
     { id: "dashboard", label: "Dashboard", component: Dashboard },
@@ -15,7 +16,17 @@
     { id: "suppressions", label: "Suppressions", component: Suppressions },
     { id: "tenants", label: "Tenants", component: Tenants },
     { id: "bounces", label: "Bounces", component: Bounces },
+    { id: "users", label: "Users", component: Users },
   ];
+
+  // Who am I — for display and for hiding controls a viewer cannot use.
+  // The server enforces regardless.
+  $effect(() => {
+    if (auth.token && !me.value) {
+      api("/me").then((m) => me.set(m)).catch(() => {});
+    }
+    if (!auth.token) me.set(null);
+  });
 
   // The stored theme is applied before first paint of anything below.
   applyTheme();
@@ -197,6 +208,12 @@
       </nav>
 
       <div class="p-2 flex flex-col gap-2 border-t border-base-300 text-sm">
+        {#if me.value}
+          <div class="hidden sm:block px-2 text-xs opacity-60 break-all">
+            {me.value.actor}
+            <span class="badge badge-xs ml-1">{me.value.role}</span>
+          </div>
+        {/if}
         <div class="hidden sm:block">{@render themePicker()}</div>
         <button
           class="btn btn-ghost btn-sm justify-start gap-3"

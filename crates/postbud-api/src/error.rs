@@ -11,6 +11,9 @@ pub enum ApiError {
     /// them, so it says what to fix.
     BadRequest(String),
     NotFound,
+    /// Authenticated, but the action needs the admin role. Distinct from
+    /// 401 so the UI does not throw away a perfectly good session.
+    Forbidden,
     /// The admin surface was called but ADMIN_TOKEN is not configured.
     /// Honest 503 rather than a 401 that sends someone hunting for a
     /// mistyped token that does not exist.
@@ -29,6 +32,10 @@ impl IntoResponse for ApiError {
             ),
             ApiError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg),
             ApiError::NotFound => (StatusCode::NOT_FOUND, "not found".to_string()),
+            ApiError::Forbidden => (
+                StatusCode::FORBIDDEN,
+                "this action requires the admin role".to_string(),
+            ),
             ApiError::AdminDisabled => (
                 StatusCode::SERVICE_UNAVAILABLE,
                 "admin surface is not configured (ADMIN_TOKEN is unset)".to_string(),

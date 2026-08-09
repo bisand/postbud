@@ -177,9 +177,20 @@ Authentication has two independent paths:
   through `/admin/api/oidc/token` (no issuer CORS, optional client
   secret stays server-side); API calls carry the id_token, verified
   against the issuer's JWKS (iss, aud = our client id, exp, RS256).
-  The issuer owns accounts and passwords; **authorization stays here**:
-  `ADMIN_OIDC_USERS` is an allowlist of emails/subject ids, and a valid
-  login by anyone else is refused. Half-configuration fails at startup.
+  The issuer owns accounts and passwords; **authorization stays here**,
+  in the `admin_user` table, managed from the Users section: each grant
+  is an email or subject id with a role — `admin` (everything) or
+  `viewer` (sees everything, changes nothing; mutations answer 403).
+  Grants are soft-ended, never deleted; a role change is an end plus a
+  new row; the last admin can be neither removed nor demoted (checked
+  under row locks, so two concurrent removals cannot both succeed).
+  While the table is empty, the `ADMIN_OIDC_USERS` environment
+  allowlist governs — the bootstrap window — and the first row closes
+  it, after which the variable can be dropped.
+  Mutating endpoints take the `AdminWrite` extractor and read endpoints
+  `Admin`, so no handler can forget to ask; every audit field
+  (`suppression.source`, `removed_by`, `created_by`…) carries the
+  actor's name, never a generic "admin".
 - **`ADMIN_TOKEN`** — the break-glass and machine path, deliberately
   separate from the tenant keys: a tenant key sends mail, the admin
   credential mints and revokes tenant keys. An issuer outage must not
