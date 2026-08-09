@@ -164,8 +164,11 @@ pub struct MessageFilter<'a> {
     pub status: Option<&'a str>,
     /// Substring match on the recipient, case-insensitive.
     pub rcpt: Option<&'a str>,
-    /// Cursor: only rows created strictly before this instant.
-    pub before: Option<DateTime<Utc>>,
+    /// Keyset cursor: strictly older than this row. Both parts together —
+    /// `created_at` alone would skip or repeat rows created in the same
+    /// microsecond, and OFFSET paging re-scans everything it skips, which
+    /// is exactly the slow-after-a-while this exists to prevent.
+    pub before: Option<(DateTime<Utc>, Uuid)>,
     pub limit: i64,
 }
 
@@ -173,6 +176,10 @@ pub async fn messages(
     pool: &PgPool,
     filter: &MessageFilter<'_>,
 ) -> anyhow::Result<Vec<MessageRow>> {
+    let (before_at, before_id) = match filter.before {
+        Some((at, id)) => (Some(at), Some(id)),
+        None => (None, None),
+    };
     let rows = sqlx::query(
         "select m.id, t.name as tenant, m.mail_from, m.rcpt_to, m.subject,
                 m.status, m.attempts, m.relay_queue_id, m.last_error,
@@ -181,15 +188,16 @@ pub async fn messages(
           where ($1::text is null or t.name = $1)
             and ($2::text is null or m.status = $2)
             and ($3::text is null or m.rcpt_to ilike '%' || $3 || '%')
-            and ($4::timestamptz is null or m.created_at < $4)
-          order by m.created_at desc
-          limit $5",
+            and ($4::timestamptz is null or (m.created_at, m.id) < ($4, $5))
+          order by m.created_at desc, m.id desc
+          limit $6",
     )
     .bind(filter.tenant)
     .bind(filter.status)
     .bind(filter.rcpt)
-    .bind(filter.before)
-    .bind(filter.limit.clamp(1, 200))
+    .bind(before_at)
+    .bind(before_id)
+    .bind(filter.limit.clamp(1, 201))
     .fetch_all(pool)
     .await
     .context("listing messages")?;
@@ -372,10 +380,15 @@ pub struct SuppressionRow {
 /// The whole list across tenants, history included when asked for —
 /// "suppressed on the 3rd, lifted on the 9th" is the answer the admin is
 /// usually looking for.
+///
+/// Keyset-paged on the bigserial id (descending id = descending creation
+/// time), so page N+10 costs the same as page 1.
 pub async fn suppressions(
     pool: &PgPool,
     address: Option<&str>,
     include_removed: bool,
+    before_id: Option<i64>,
+    limit: i64,
 ) -> anyhow::Result<Vec<SuppressionRow>> {
     let rows = sqlx::query(
         "select s.id, t.name as tenant, s.address, s.reason, s.source,
@@ -383,11 +396,14 @@ pub async fn suppressions(
            from suppression s left join tenant t on t.id = s.tenant_id
           where ($1::text is null or s.address ilike '%' || $1 || '%')
             and ($2 or s.removed_at is null)
-          order by s.created_at desc
-          limit 500",
+            and ($3::bigint is null or s.id < $3)
+          order by s.id desc
+          limit $4",
     )
     .bind(address)
     .bind(include_removed)
+    .bind(before_id)
+    .bind(limit.clamp(1, 201))
     .fetch_all(pool)
     .await
     .context("listing suppressions")?;
@@ -423,13 +439,22 @@ fn bounce_row(r: sqlx::postgres::PgRow) -> BounceRow {
     }
 }
 
-pub async fn bounces(pool: &PgPool, limit: i64) -> anyhow::Result<Vec<BounceRow>> {
+/// Keyset-paged on the bigserial id, newest first.
+pub async fn bounces(
+    pool: &PgPool,
+    before_id: Option<i64>,
+    limit: i64,
+) -> anyhow::Result<Vec<BounceRow>> {
     let rows = sqlx::query(
         "select id, received_at, final_rcpt, status_code, classification,
                 diagnostic, relay_queue_id, message_id
-           from bounce_report order by received_at desc limit $1",
+           from bounce_report
+          where ($1::bigint is null or id < $1)
+          order by id desc
+          limit $2",
     )
-    .bind(limit.clamp(1, 200))
+    .bind(before_id)
+    .bind(limit.clamp(1, 201))
     .fetch_all(pool)
     .await
     .context("listing bounces")?;

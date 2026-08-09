@@ -9,6 +9,11 @@
   let filter = $state("");
   let includeRemoved = $state(false);
 
+  // Keyset paging: stack of cursors (null = first page) + position.
+  let stack = $state([null]);
+  let pos = $state(0);
+  let next = $state(null);
+
   // Block form.
   let address = $state("");
   let scope = $state("");
@@ -24,10 +29,33 @@
       const params = new URLSearchParams();
       if (filter) params.set("address", filter);
       if (includeRemoved) params.set("include_removed", "true");
-      rows = await api(`/suppressions?${params}`);
+      const cursor = stack[pos];
+      if (cursor) params.set("before_id", cursor.before_id);
+      const page = await api(`/suppressions?${params}`);
+      rows = page.items;
+      next = page.next;
     } catch (e) {
       error = e.message;
     }
+  }
+
+  function research() {
+    stack = [null];
+    pos = 0;
+    load();
+  }
+
+  function older() {
+    if (!next) return;
+    if (pos === stack.length - 1) stack = [...stack, next];
+    pos += 1;
+    load();
+  }
+
+  function newer() {
+    if (pos === 0) return;
+    pos -= 1;
+    load();
   }
 
   async function block(event) {
@@ -113,7 +141,7 @@
         class="flex flex-wrap gap-2 items-end"
         onsubmit={(e) => {
           e.preventDefault();
-          load();
+          research();
         }}
       >
         <label class="form-control">
@@ -162,6 +190,11 @@
               {/each}
             </tbody>
           </table>
+        </div>
+        <div class="flex items-center gap-2">
+          <button class="btn btn-sm" disabled={pos === 0} onclick={newer}>← Newer</button>
+          <button class="btn btn-sm" disabled={!next} onclick={older}>Older →</button>
+          {#if pos > 0}<span class="text-xs opacity-60">page {pos + 1}</span>{/if}
         </div>
       {/if}
     </div>

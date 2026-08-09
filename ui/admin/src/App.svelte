@@ -19,9 +19,18 @@
   // The stored theme is applied before first paint of anything below.
   applyTheme();
 
-  let section = $state(location.hash.slice(1) || "dashboard");
+  // Hash routing with one optional segment: `#messages/{id}` is the
+  // detail view INSIDE the messages section. Putting the detail in the
+  // route is what makes the browser's Back button return to the list
+  // instead of leaving the app.
+  function parseHash() {
+    const parts = location.hash.slice(1).split("/");
+    return { section: parts[0] || "dashboard", param: parts[1] || null };
+  }
+  let route = $state(parseHash());
+  const section = $derived(route.section);
   $effect(() => {
-    const onHash = () => (section = location.hash.slice(1) || "dashboard");
+    const onHash = () => (route = parseHash());
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
   });
@@ -141,7 +150,7 @@
     </aside>
 
     <main class="p-4 grow max-w-6xl min-w-0">
-      <Active />
+      <Active param={route.param} />
     </main>
   </div>
 {/if}

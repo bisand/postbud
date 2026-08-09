@@ -5,13 +5,36 @@
   let error = $state("");
   let raw = $state(null); // { id, text }
 
+  // Keyset paging: stack of cursors (null = first page) + position.
+  let stack = $state([null]);
+  let pos = $state(0);
+  let next = $state(null);
+
   async function load() {
     error = "";
     try {
-      rows = await api("/bounces?limit=100");
+      const params = new URLSearchParams();
+      const cursor = stack[pos];
+      if (cursor) params.set("before_id", cursor.before_id);
+      const page = await api(`/bounces?${params}`);
+      rows = page.items;
+      next = page.next;
     } catch (e) {
       error = e.message;
     }
+  }
+
+  function older() {
+    if (!next) return;
+    if (pos === stack.length - 1) stack = [...stack, next];
+    pos += 1;
+    load();
+  }
+
+  function newer() {
+    if (pos === 0) return;
+    pos -= 1;
+    load();
   }
 
   async function showRaw(id) {
@@ -85,6 +108,11 @@
             {/each}
           </tbody>
         </table>
+      </div>
+      <div class="flex items-center gap-2">
+        <button class="btn btn-sm" disabled={pos === 0} onclick={newer}>← Newer</button>
+        <button class="btn btn-sm" disabled={!next} onclick={older}>Older →</button>
+        {#if pos > 0}<span class="text-xs opacity-60">page {pos + 1}</span>{/if}
       </div>
     {/if}
   </div>

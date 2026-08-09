@@ -102,28 +102,61 @@ async fn overview(
     Ok(Json(admin::overview(&state.pool).await?))
 }
 
+/// One page of a keyset-paged list. `next` carries the cursor for the
+/// following (older) page, or is null on the last page. Requesting
+/// `limit` rows actually fetches `limit + 1` — the presence of the extra
+/// row is what proves there IS a next page, without a COUNT(*) that
+/// would rescan the table and defeat the point of paging.
+#[derive(Debug, serde::Serialize)]
+struct Page<T, C> {
+    items: Vec<T>,
+    next: Option<C>,
+}
+
+fn paginate<T, C>(mut items: Vec<T>, limit: usize, cursor: impl Fn(&T) -> C) -> Page<T, C> {
+    let next = if items.len() > limit {
+        items.truncate(limit);
+        items.last().map(&cursor)
+    } else {
+        None
+    };
+    Page { items, next }
+}
+
 #[derive(Debug, Deserialize)]
 struct MessagesQuery {
     tenant: Option<String>,
     status: Option<String>,
     rcpt: Option<String>,
     before: Option<DateTime<Utc>>,
+    before_id: Option<Uuid>,
     limit: Option<i64>,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct MessageCursor {
+    before: DateTime<Utc>,
+    before_id: Uuid,
 }
 
 async fn messages(
     State(state): State<AppState>,
     _admin: Admin,
     Query(q): Query<MessagesQuery>,
-) -> ApiResult<Json<Vec<admin::MessageRow>>> {
+) -> ApiResult<Json<Page<admin::MessageRow, MessageCursor>>> {
+    let limit = q.limit.unwrap_or(50).clamp(1, 200);
     let filter = admin::MessageFilter {
         tenant: q.tenant.as_deref().filter(|t| !t.is_empty()),
         status: q.status.as_deref().filter(|s| !s.is_empty()),
         rcpt: q.rcpt.as_deref().filter(|r| !r.is_empty()),
-        before: q.before,
-        limit: q.limit.unwrap_or(50),
+        before: q.before.zip(q.before_id),
+        limit: limit + 1,
     };
-    Ok(Json(admin::messages(&state.pool, &filter).await?))
+    let rows = admin::messages(&state.pool, &filter).await?;
+    Ok(Json(paginate(rows, limit as usize, |m| MessageCursor {
+        before: m.created_at,
+        before_id: m.id,
+    })))
 }
 
 async fn message_detail(
@@ -142,17 +175,33 @@ struct SuppressionsQuery {
     address: Option<String>,
     #[serde(default)]
     include_removed: bool,
+    before_id: Option<i64>,
+    limit: Option<i64>,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct IdCursor {
+    before_id: i64,
 }
 
 async fn suppressions(
     State(state): State<AppState>,
     _admin: Admin,
     Query(q): Query<SuppressionsQuery>,
-) -> ApiResult<Json<Vec<admin::SuppressionRow>>> {
+) -> ApiResult<Json<Page<admin::SuppressionRow, IdCursor>>> {
+    let limit = q.limit.unwrap_or(50).clamp(1, 200);
     let address = q.address.as_deref().filter(|a| !a.is_empty());
-    Ok(Json(
-        admin::suppressions(&state.pool, address, q.include_removed).await?,
-    ))
+    let rows = admin::suppressions(
+        &state.pool,
+        address,
+        q.include_removed,
+        q.before_id,
+        limit + 1,
+    )
+    .await?;
+    Ok(Json(paginate(rows, limit as usize, |s| IdCursor {
+        before_id: s.id,
+    })))
 }
 
 #[derive(Debug, Deserialize)]
@@ -310,6 +359,7 @@ async fn tenant_domains(
 
 #[derive(Debug, Deserialize)]
 struct BouncesQuery {
+    before_id: Option<i64>,
     limit: Option<i64>,
 }
 
@@ -317,10 +367,12 @@ async fn bounces(
     State(state): State<AppState>,
     _admin: Admin,
     Query(q): Query<BouncesQuery>,
-) -> ApiResult<Json<Vec<admin::BounceRow>>> {
-    Ok(Json(
-        admin::bounces(&state.pool, q.limit.unwrap_or(50)).await?,
-    ))
+) -> ApiResult<Json<Page<admin::BounceRow, IdCursor>>> {
+    let limit = q.limit.unwrap_or(50).clamp(1, 200);
+    let rows = admin::bounces(&state.pool, q.before_id, limit + 1).await?;
+    Ok(Json(paginate(rows, limit as usize, |b| IdCursor {
+        before_id: b.id,
+    })))
 }
 
 async fn bounce_raw(

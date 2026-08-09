@@ -161,6 +161,14 @@ per-tenant), tenant administration (create, edit domains, deactivate,
 rotate key — rotation kills the old key in the same statement), and the
 raw bounce feed.
 
+The unbounded lists (messages, suppressions, bounces) are **keyset-paged**
+end to end: the API returns `{items, next}` where `next` is the cursor for
+the following page, discovered by fetching one row beyond the limit — no
+OFFSET, no COUNT(*), so page fifty costs what page one costs. The message
+detail is a route (`#messages/{id}`), so the browser's Back button returns
+to the list with its filters and page intact. The tenant list is
+deliberately unpaged — it is bounded by the number of sending systems.
+
 Authentication is a single `ADMIN_TOKEN`, deliberately separate from the
 tenant keys: a tenant key sends mail, the admin token mints and revokes
 tenant keys — a strictly greater privilege that must not be reachable from
