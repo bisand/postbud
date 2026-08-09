@@ -46,7 +46,7 @@ pub struct Accepted {
 ///    "We deliberately did not send this, and here is why" is an answer;
 ///    a 4xx from the API that leaves no trace is not.
 /// 2. The row is inserted, or not, on the idempotency key. This is what
-///    makes a caller's retry safe: regnmed passing its `utsendelse` id
+///    makes a caller's retry safe: resubmitting the same business event
 ///    cannot turn one invoice into two.
 /// 3. Attachments are stored with their digest.
 pub async fn accept(pool: &PgPool, msg: &NewMessage) -> anyhow::Result<Accepted> {

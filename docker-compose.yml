@@ -1,7 +1,7 @@
 # Local development database.
 #
-# Port 5434, deliberately: regnmed's dev database already holds 5433 and
-# the two are often up at once.
+# Port 5434, deliberately: 5432/5433 are commonly taken by other local
+# databases, and a port collision is a confusing way to start the day.
 services:
   db:
     image: postgres:18-alpine

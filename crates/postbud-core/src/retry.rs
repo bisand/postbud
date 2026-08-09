@@ -1,11 +1,10 @@
 //! The retry schedule.
 //!
-//! This exists because of a specific, measured failure mode. regnid's mail
-//! worker (`src/mailq.rs`) retries a NAKed message on
-//! `[1s, 5s, 30s, 60s, 120s]` and gives up after five attempts — a total
-//! window of 216 seconds. Once `max_deliver` is exceeded the message leaves
-//! the work-queue stream and the only trace is a `MAX_DELIVERIES` advisory
-//! that nothing consumes.
+//! This exists because of a specific, measured failure mode. The in-app
+//! retry loops postbud replaces typically retry a failed handoff on a
+//! schedule like `[1s, 5s, 30s, 60s, 120s]` and give up after five
+//! attempts — a total window of a few minutes, after which the message
+//! vanishes with at most an advisory that nothing consumes.
 //!
 //! That window is fine when the transport is a hosted API that never
 //! reboots. It is not fine when the transport is a single VM that gets

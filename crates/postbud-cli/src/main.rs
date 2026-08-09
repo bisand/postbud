@@ -12,7 +12,7 @@ use clap::{Parser, Subcommand};
 #[command(
     name = "postbud",
     version,
-    about = "Transactional mail for regnmed and networco"
+    about = "Self-hosted transactional mail: API in front, Postfix behind"
 )]
 struct Cli {
     #[command(subcommand)]

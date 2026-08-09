@@ -4,7 +4,7 @@ import tailwindcss from "@tailwindcss/vite";
 
 // Served by postbud-api at /admin, so every asset URL must carry that
 // prefix. The dev server proxies /admin/api to a locally running
-// `postbud serve` (override with POSTBUD_API_PROXY, regnmed's pattern).
+// `postbud serve` (override with POSTBUD_API_PROXY).
 export default defineConfig({
   base: "/admin/",
   plugins: [svelte(), tailwindcss()],

@@ -10,9 +10,9 @@ use crate::address;
 /// May this tenant send with this `From:` address?
 ///
 /// Matching is exact on the domain, case-insensitive. Subdomains are
-/// deliberately NOT implied: allowing `bogen.tech` must not silently allow
-/// `phish.bogen.tech`, and a wildcard is the kind of convenience that turns
-/// into an incident. List every sending domain explicitly.
+/// deliberately NOT implied: allowing `example.com` must not silently
+/// allow `phish.example.com`, and a wildcard is the kind of convenience
+/// that turns into an incident. List every sending domain explicitly.
 pub fn may_send_as(from: &str, allowed_domains: &[String]) -> bool {
     let Some(domain) = address::domain(from) else {
         return false;
@@ -27,25 +27,25 @@ mod tests {
     use super::*;
 
     fn domains() -> Vec<String> {
-        vec!["bogen.tech".into(), "faktura.regnmed.no".into()]
+        vec!["example.com".into(), "billing.example.org".into()]
     }
 
     #[test]
     fn listed_domains_are_allowed_case_insensitively() {
-        assert!(may_send_as("no-reply@bogen.tech", &domains()));
-        assert!(may_send_as("faktura@FAKTURA.REGNMED.NO", &domains()));
+        assert!(may_send_as("no-reply@example.com", &domains()));
+        assert!(may_send_as("invoice@BILLING.EXAMPLE.ORG", &domains()));
     }
 
     #[test]
     fn an_unlisted_domain_is_refused() {
-        assert!(!may_send_as("no-reply@networco.no", &domains()));
+        assert!(!may_send_as("no-reply@other.example", &domains()));
     }
 
     /// The property that makes per-tenant keys worth having: a stolen
-    /// regnmed key cannot be used to send as anyone else.
+    /// key for one tenant cannot be used to send as anyone else.
     #[test]
     fn a_subdomain_is_not_implied_by_its_parent() {
-        assert!(!may_send_as("no-reply@phish.bogen.tech", &domains()));
+        assert!(!may_send_as("no-reply@phish.example.com", &domains()));
     }
 
     #[test]

@@ -17,11 +17,11 @@ use crate::error::{ApiError, ApiResult};
 pub struct SubmitRequest {
     /// The caller's own id for the business event behind this mail.
     ///
-    /// regnmed passes its `utsendelse` id, which is what makes a retry
-    /// safe: the same key can never produce a second invoice in the
-    /// customer's inbox. Callers without a natural id may omit it, and
-    /// then every submission is a new message — which is the honest
-    /// behaviour, not a silent guess.
+    /// An invoicing system passes the id of the dispatch it recorded,
+    /// which is what makes a retry safe: the same key can never produce a
+    /// second invoice in the customer's inbox. Callers without a natural
+    /// id may omit it, and then every submission is a new message — which
+    /// is the honest behaviour, not a silent guess.
     pub idempotency_key: Option<String>,
     pub from: String,
     pub from_name: Option<String>,
@@ -75,7 +75,7 @@ pub async fn submit(
         .map_err(|err| ApiError::BadRequest(format!("reply_to: {err}")))?;
 
     // The boundary a shared SMTP credential cannot give you: a leaked
-    // regnmed key cannot send as networco.
+    // key for one tenant cannot send as any other.
     if !authz::may_send_as(&mail_from, &tenant.from_domains) {
         return Err(ApiError::BadRequest(format!(
             "tenant '{}' may not send as {mail_from} (allowed domains: {})",
@@ -156,8 +156,8 @@ pub struct StatusResponse {
 
 /// `GET /v1/messages/{id}`
 ///
-/// The question regnmed's `utsendelse` log cannot answer on its own: it
-/// records that a message was handed off, never whether it arrived.
+/// The question a caller's own dispatch log cannot answer: it records
+/// that a message was handed off, never whether it arrived.
 pub async fn status(
     State(state): State<AppState>,
     Tenant(tenant): Tenant,

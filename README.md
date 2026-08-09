@@ -1,9 +1,8 @@
 # postbud
 
-Transactional mail for [regnmed](https://github.com/bisand/regnmed), regnid
-and networco. A small Rust service that accepts mail over HTTP, keeps it
-until it is delivered, remembers what happened to it, and never writes to an
-address that has already bounced.
+Self-hosted transactional mail. A small Rust service that accepts mail
+over HTTP, keeps it until it is delivered, remembers what happened to it,
+and never writes to an address that has already bounced.
 
 It is **not** an MTA. Delivery is Postfix's job — MX resolution,
 per-destination concurrency, TLS policy, DSN generation. postbud sits in
@@ -17,48 +16,48 @@ front of it and owns the three things Postfix structurally cannot:
 
 ## Why it exists
 
-regnmed already records that a message was *handed off* (`utsendelse`,
-migration 0020). It cannot record whether it was *delivered* — and "did the
-customer get the invoice?" is a question its users ask.
+An application's own dispatch log records that a message was *handed
+off*. It cannot record whether it was *delivered* — and "did the customer
+get the invoice?" is a question users ask.
 
-More urgently: regnid's mail worker retries a failed handoff on
-`[1s, 5s, 30s, 60s, 120s]` and then drops the message, leaving only a
-JetStream advisory nothing consumes. A total window of **216 seconds**. That
-is survivable against a hosted API; against a single self-hosted relay that
-gets kernel updates, any outage longer than four minutes silently destroys
-invoices. postbud persists on accept and retries for **just over two days**
-(`postbud-core::retry`, pinned by a test that fails if the window ever drops
-below a day).
+More urgently: the in-app retry loop postbud replaces typically retries a
+failed handoff on something like `[1s, 5s, 30s, 60s, 120s]` and then
+drops the message — a total window of a few minutes. That is survivable
+against a hosted API; against a single self-hosted relay that gets kernel
+updates, any outage longer than the window silently destroys invoices.
+postbud persists on accept and retries for **just over two days**
+(`postbud-core::retry`, pinned by a test that fails if the window ever
+drops below a day).
 
 ## Shape
 
 ```
-regnmed ─┐
-         ├─ HTTP ─→ postbud ─ SMTP ─→ Postfix ─→ the internet
-networco ┘         (cluster)         (STW VM, owns the IP + PTR + DKIM key)
-                      │                  │
-                   Postgres         bounces ─→ postbud bounce-ingest
+app A ─┐
+       ├─ HTTP ─→ postbud ─ SMTP ─→ Postfix ─→ the internet
+app B ─┘         (cluster)         (own VM, owns the IP + PTR + DKIM key)
+                    │                  │
+                 Postgres         bounces ─→ postbud bounce-ingest
 ```
 
-postbud runs in the k3s cluster, next to the applications and the database.
-The relay runs on its own VM with its own IPv4 and PTR record, and holds no
-credentials and no state worth backing up: losing it costs an IP address,
-not a secret. The DKIM private key exists in exactly one place — OpenDKIM on
-the relay host — and never in this repository.
+postbud runs wherever the applications run. The relay runs on its own VM
+with its own IPv4 and PTR record, and holds no credentials and no state
+worth backing up: losing it costs an IP address, not a secret. The DKIM
+private key exists in exactly one place — OpenDKIM on the relay host —
+and never in this repository.
 
 **One identifier survives all three hops.** The caller's idempotency key
-(regnmed passes its `utsendelse` id) identifies the business event; Postfix's
-queue id, captured from its `250 Ok: queued as …` response, is stored on the
-message and is the only handle a bounce arriving on Thursday carries for an
-invoice sent on Monday. Designing that in on day one is why debugging stays
-a single query instead of grepping timestamps across three logs.
+identifies the business event; Postfix's queue id, captured from its
+`250 Ok: queued as …` response, is stored on the message and is the only
+handle a bounce arriving on Thursday carries for an invoice sent on
+Monday. Designing that in on day one is why debugging stays a single
+query instead of grepping timestamps across three logs.
 
 ## Quick start
 
 ```bash
 cp .env.example .env
 cargo run -p postbud-cli -- migrate
-cargo run -p postbud-cli -- tenant add --name regnmed --domain bogen.tech
+cargo run -p postbud-cli -- tenant add --name my-app --domain example.com
 cargo run -p postbud-cli -- serve     # API
 cargo run -p postbud-cli -- worker    # delivery, separate process
 cargo test --workspace
@@ -71,9 +70,9 @@ its SHA-256 digest.
 curl -X POST localhost:8080/v1/messages \
   -H "Authorization: Bearer pb_live_…" \
   -H "Content-Type: application/json" \
-  -d '{"idempotency_key":"utsendelse-42",
-       "from":"no-reply@bogen.tech","to":"kunde@example.no",
-       "subject":"Faktura 1001","text":"Vedlagt."}'
+  -d '{"idempotency_key":"dispatch-42",
+       "from":"no-reply@example.com","to":"customer@example.net",
+       "subject":"Invoice 1001","text":"Attached."}'
 ```
 
 With `ADMIN_TOKEN` set, `/admin` serves the admin UI: dashboard, delivery
@@ -86,16 +85,16 @@ the raw bounce feed. See docs/architecture.md §9.
 solely from postbud's delivery worker — nothing can relay around the
 suppression list, the idempotent dedup and the delivery record.
 
-**regnid speaks the API** (`MAIL_TRANSPORT=postbud`, `POSTBUD_URL`,
-`POSTBUD_API_KEY`) — cut over in test and prod 2026-08-08.
+Each sending system is a **tenant**: its own API key (stored as a
+digest), bound to an explicit list of sending domains. Submit with
+`POST /v1/messages`, poll `GET /v1/messages/{id}`, manage the
+suppression list under `/v1/suppressions`.
 
-**networco implements `IEmailService` against the HTTP API** — the
-implementation lives in `apps/shared/Services/PostbudEmailService.cs`.
-
-**One rail, not two.** If postbud ends up running *beside* regnid's mail
-worker rather than in front of it, there are two suppression lists, they
-disagree, and one system keeps mailing addresses the other knows are dead.
-That is the single decision that determines whether this helps.
+**One rail, not two.** If postbud ends up running *beside* an
+application's own mail path rather than in front of it, there are two
+suppression lists, they disagree, and one system keeps mailing addresses
+the other knows are dead. That is the single decision that determines
+whether this helps.
 
 ## Layout
 
@@ -109,27 +108,23 @@ That is the single decision that determines whether this helps.
   and embedded into the binary, so building the Rust workspace never
   needs node. Rebuild with `scripts/build-ui.sh`.
 - `docs/postfix/` — relay configuration, the bounce pipe, and DNS.
+- `deploy/` + `flux/` — a reference Kubernetes deployment (kustomize,
+  Flux-pulled). Adapt or ignore.
 
 ## Conventions
 
-Prose is **English throughout**, including `docs/`. This differs from
-regnmed, whose `docs/` are Norwegian because they are audit-facing —
-revisorer and certification processes read them. Nothing here is audit-facing,
-the licence is permissive, and the only Norwegian word that carries meaning
-is the name. Written down so it stays a decision rather than becoming drift.
+Prose is **English throughout**, including `docs/`.
 
 Run `cargo fmt --all` before committing.
 
 ## Not built
 
-- **Inbound mail.** The relay accepts a short allowlist (bounces, `abuse@`,
-  `postmaster@`, DMARC reports) and rejects everything else at RCPT time.
-  regnmed's `e-post-inn` (migration 0032) still waits on an MX that does not
-  exist yet; standing that up means either a bigger relay VM or content
-  scanning in the cluster.
+- **Inbound mail.** The relay accepts a short allowlist (bounces,
+  `abuse@`, `postmaster@`, DMARC reports) and rejects everything else at
+  RCPT time — which is what keeps it free of a filtering stack and
+  comfortable in 2 GB.
 - **Scheduled sending, templates, open/click tracking.** Deliberate. The
   applications own their content; postbud moves it.
-- **A web UI.** The API and the CLI are the surface.
 
 ## Licence
 

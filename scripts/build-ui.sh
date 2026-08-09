@@ -4,7 +4,7 @@
 # dist/ is committed so the Rust build never needs node: postbud-api
 # embeds it with include_dir at compile time. `npm ci` always — a build
 # from package-lock.json is reproducible, a build from a warm
-# node_modules is whatever was lying around (regnmed's rule).
+# node_modules is whatever was lying around.
 set -eu
 cd "$(dirname "$0")/../ui/admin"
 

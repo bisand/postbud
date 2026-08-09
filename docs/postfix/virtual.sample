@@ -15,7 +15,7 @@
 # Every address NOT listed here is rejected at RCPT time, before any content
 # is accepted. That is what keeps this host free of a filtering stack.
 
-bounces@bogentech.no      postbud-bounce:
-abuse@bogentech.no        admin@example.com
-postmaster@bogentech.no   admin@example.com
-dmarc@bogentech.no        admin@example.com
+bounces@example.com      postbud-bounce:
+abuse@example.com        admin@example.com
+postmaster@example.com   admin@example.com
+dmarc@example.com        admin@example.com

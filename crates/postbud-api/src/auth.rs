@@ -1,8 +1,7 @@
 //! Tenant authentication.
 //!
 //! One seam. Adding [`Tenant`] as a handler argument is what protects a
-//! route, so no endpoint can be added that forgets to authenticate — the
-//! same trick regnmed uses with its `AuthPerson` extractor.
+//! route, so no endpoint can be added that forgets to authenticate.
 
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;

@@ -10,8 +10,7 @@
       .catch((e) => (error = e.message));
   });
 
-  // CSS-only bars, no chart library — same frugality as regnmed's
-  // nøkkeltall card.
+  // CSS-only bars, no chart library — nothing here justifies one.
   const maxDay = $derived(
     data
       ? Math.max(

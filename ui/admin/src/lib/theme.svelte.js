@@ -1,6 +1,5 @@
 // Theme preference. localStorage, never anything server-side — a UI
-// preference belongs to the browser it was chosen in (the same doctrine
-// as regnmed's portal).
+// preference belongs to the browser it was chosen in.
 //
 // "system" removes the data-theme attribute entirely, which hands the
 // choice back to daisyUI's --default/--prefersdark pair, i.e. the OS.

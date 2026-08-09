@@ -1,4 +1,4 @@
-# Postfix on the ServeTheWorld mail VM.
+# Postfix on the relay VM.
 #
 # This host does one job: hold the IP reputation and put mail on the wire.
 # It has no database, no application code and no state worth backing up
@@ -10,14 +10,14 @@
 
 # ---------------------------------------------------------------- identity
 
-myhostname = mail.bogentech.no
-mydomain = bogentech.no
+myhostname = mail.example.com
+mydomain = example.com
 myorigin = $mydomain
 
 # The HELO name must match the PTR record, and the PTR must resolve back to
 # this name. Forward-confirmed reverse DNS is the cheapest reputation signal
 # there is, and the most commonly missed.
-smtp_helo_name = mail.bogentech.no
+smtp_helo_name = mail.example.com
 
 # ------------------------------------------------------------ IPv4 only
 #
@@ -29,15 +29,15 @@ inet_protocols = ipv4
 
 # --------------------------------------------------- who may inject mail
 #
-# The pod network of the cluster, and nothing else. This is the whole
-# access-control model of the relay: only postbud's delivery worker may
-# inject mail, so every message on the wire has passed the API -- the
-# suppression list, the dedup, the delivery record. The tailnet is
-# deliberately NOT here: a tailnet CIDR would let any enrolled machine
-# relay directly and bypass all of that (this was the original config,
-# tightened 2026-08-09).
+# The network postbud's delivery worker submits from, and nothing else.
+# This is the whole access-control model of the relay: only the worker
+# may inject mail, so every message on the wire has passed the API -- the
+# suppression list, the dedup, the delivery record. Do NOT add a wider
+# range (a VPN, an office network) for convenience: any machine on it
+# could then relay directly and bypass all of that.
 #
-# Replace with the actual pod CIDR. Do NOT add 0.0.0.0/0 "temporarily".
+# Replace with the worker's actual CIDR. Never 0.0.0.0/0, not even
+# "temporarily".
 mynetworks = 127.0.0.0/8, 10.42.0.0/16
 
 smtpd_relay_restrictions =
@@ -62,8 +62,8 @@ smtp_tls_session_cache_database = btree:${data_directory}/smtp_scache
 
 # ------------------------------------------------------------- inbound TLS
 smtpd_tls_security_level = may
-smtpd_tls_cert_file = /etc/letsencrypt/live/mail.bogentech.no/fullchain.pem
-smtpd_tls_key_file = /etc/letsencrypt/live/mail.bogentech.no/privkey.pem
+smtpd_tls_cert_file = /etc/letsencrypt/live/mail.example.com/fullchain.pem
+smtpd_tls_key_file = /etc/letsencrypt/live/mail.example.com/privkey.pem
 
 # ----------------------------------------------------------------- DKIM
 #

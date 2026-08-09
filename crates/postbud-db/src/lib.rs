@@ -1,7 +1,7 @@
 //! PostgreSQL persistence.
 //!
-//! Queries use sqlx's runtime API rather than the `query!` macros, for the
-//! same reason regnmed does: a build must not require a live database.
+//! Queries use sqlx's runtime API rather than the `query!` macros: a
+//! build must not require a live database.
 //!
 //! Note the split of responsibility this crate encodes. postbud owns the
 //! queue, the suppression list and the delivery record. It does NOT own
@@ -18,9 +18,9 @@ pub mod tenant;
 use anyhow::Context;
 use sqlx::postgres::{PgPool, PgPoolOptions};
 
-/// Connect. The pool is small on purpose: postbud's load is a handful of
-/// messages a minute, and the frugality budget is the same one regnmed
-/// holds itself to.
+/// Connect. The pool is small on purpose: transactional-mail load is a
+/// handful of messages a minute, and the whole system is built to fit a
+/// small VM.
 pub async fn connect(database_url: &str) -> anyhow::Result<PgPool> {
     PgPoolOptions::new()
         .max_connections(8)

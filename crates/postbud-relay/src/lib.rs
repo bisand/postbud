@@ -147,6 +147,16 @@ fn build(claimed: &Claimed) -> anyhow::Result<Message> {
         None => claimed.mail_from.clone(),
     };
 
+    // The Message-ID's right-hand side is the SENDER's domain, not any
+    // hostname of this installation: it is already validated against the
+    // tenant's allowed domains, it aligns with everything else the
+    // receiver sees, and it keeps installation names out of the code.
+    let message_id_domain = claimed
+        .mail_from
+        .rsplit_once('@')
+        .map(|(_, domain)| domain)
+        .unwrap_or("postbud.invalid");
+
     let mut builder = Message::builder()
         .from(from.parse().context("parsing From address")?)
         .to(claimed.rcpt_to.parse().context("parsing To address")?)
@@ -160,7 +170,7 @@ fn build(claimed: &Claimed) -> anyhow::Result<Message> {
         // the header as malformed, discards it and stamps its own
         // `SMTPIN_ADDED_BROKEN` id -- which is both a spam signal and a
         // silent loss of the correlation handle. Found in production.
-        .message_id(Some(format!("<{}@postbud.bogentech.no>", claimed.id)))
+        .message_id(Some(format!("<{}@{message_id_domain}>", claimed.id)))
         .subject(&claimed.subject);
 
     if let Some(reply_to) = &claimed.reply_to {
@@ -219,12 +229,12 @@ mod tests {
         Claimed {
             id,
             attempts: 0,
-            mail_from: "faktura@regnmed.no".into(),
-            from_name: Some("regnmed".into()),
-            rcpt_to: "kunde@example.no".into(),
+            mail_from: "invoice@sender.example".into(),
+            from_name: Some("Sender".into()),
+            rcpt_to: "customer@example.net".into(),
             reply_to: None,
-            subject: "Faktura 1001".into(),
-            body_text: Some("Vedlagt.".into()),
+            subject: "Invoice 1001".into(),
+            body_text: Some("Attached.".into()),
             body_html: None,
             attachments: Vec::new(),
         }
@@ -234,14 +244,17 @@ mod tests {
     /// Emitting a bare id made Gmail discard the header and substitute
     /// `SMTPIN_ADDED_BROKEN` -- a spam signal, and the loss of the handle
     /// that ties a delivered message back to its row.
+    ///
+    /// The right-hand side is the sender's own domain -- no installation
+    /// hostname is baked into the binary.
     #[test]
-    fn message_id_is_wrapped_in_angle_brackets() {
+    fn message_id_is_bracketed_and_uses_the_senders_domain() {
         let id = uuid::Uuid::new_v4();
         let message = build(&claimed(id)).expect("building the message");
         let raw = String::from_utf8_lossy(&message.formatted()).to_string();
         assert!(
-            raw.contains(&format!("Message-ID: <{id}@postbud.bogentech.no>")),
-            "Message-ID must be bracketed; got:\n{}",
+            raw.contains(&format!("Message-ID: <{id}@sender.example>")),
+            "Message-ID must be bracketed and carry the sender domain; got:\n{}",
             raw.lines()
                 .find(|l| l.starts_with("Message-ID"))
                 .unwrap_or("(absent)")

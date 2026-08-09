@@ -27,7 +27,7 @@ use crate::AppState;
 use crate::error::{ApiError, ApiResult};
 
 /// The compiled Svelte app. Checked-in dist, embedded at compile time —
-/// cargo never needs node, the same discipline as regnmed's portal.
+/// cargo never needs node.
 static UI: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/../../ui/admin/dist");
 
 pub fn router() -> Router<AppState> {

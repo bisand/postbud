@@ -1,6 +1,6 @@
 // Hand-rolled 24×24 outline icons, one per section — no icon library, no
-// CDN (the regnmed portal precedent). Stroke follows currentColor so the
-// active/hover states color them for free.
+// CDN. Stroke follows currentColor so the active/hover states color them
+// for free.
 
 const svg = (paths) =>
   `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"

@@ -1,8 +1,8 @@
 //! Delivery Status Notification parsing (RFC 3464).
 //!
-//! Hand-rolled, and tolerant in the same way regnmed's camt.053 and EHF
-//! importers are: a bounce we cannot read is stored raw and reported, never
-//! discarded and never guessed at. An unparsed bounce is a bug report.
+//! Hand-rolled and tolerant: a bounce we cannot read is stored raw and
+//! reported, never discarded and never guessed at. An unparsed bounce is a
+//! bug report.
 //!
 //! The field that matters most is `X-Postfix-Queue-ID` in the
 //! `message/delivery-status` part. It is easy to assume that is the queue
@@ -135,9 +135,9 @@ mod tests {
     const HARD_BOUNCE: &str = "\
 Content-Type: message/delivery-status
 
-Reporting-MTA: dns; mail.bogentech.no
+Reporting-MTA: dns; mail.example.org
 X-Postfix-Queue-ID: 4bXlNq2Qh8z1Yk
-X-Postfix-Sender: rfc822; no-reply@bogen.tech
+X-Postfix-Sender: rfc822; no-reply@example.org
 Arrival-Date: Thu, 7 Aug 2026 09:14:02 +0200 (CEST)
 
 Final-Recipient: rfc822; nosuch@example.com

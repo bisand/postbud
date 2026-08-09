@@ -5,8 +5,7 @@
 //!
 //! This is the ONLY way to send: the relay accepts submission solely from
 //! postbud's own delivery worker, so nothing can route around the
-//! suppression list, the dedup and the delivery record. regnid and
-//! networco both speak this API.
+//! suppression list, the dedup and the delivery record.
 
 pub mod admin;
 pub mod auth;

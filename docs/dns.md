@@ -15,8 +15,8 @@ The single most-missed item. The provider sets the PTR; you set the A
 record; both must agree.
 
 ```
-217.170.199.x   PTR   mail.bogentech.no
-mail.bogentech.no  A  217.170.199.x
+192.0.2.10   PTR   mail.example.com
+mail.example.com  A  192.0.2.10
 ```
 
 One PTR record, not several. Postfix's `smtp_helo_name` must be that same
@@ -36,8 +36,8 @@ domain, and `-all`, not `~all`. A soft fail invites the spoofing the record
 exists to stop.
 
 ```
-bogentech.no.   TXT  "v=spf1 ip4:217.170.199.x -all"
-bogen.tech.     TXT  "v=spf1 ip4:217.170.199.x -all"
+example.com.   TXT  "v=spf1 ip4:192.0.2.10 -all"
+example.org.     TXT  "v=spf1 ip4:192.0.2.10 -all"
 ```
 
 Do not include third-party `include:` mechanisms you no longer use; each
@@ -52,7 +52,7 @@ repository, not in a Kubernetes secret, not in a backup. Rotation is a new
 selector, not a replaced key.
 
 ```
-s2026a._domainkey.bogentech.no.  TXT  "v=DKIM1; k=rsa; p=MIIBIjANBg…"
+s2026a._domainkey.example.com.  TXT  "v=DKIM1; k=rsa; p=MIIBIjANBg…"
 ```
 
 ### DMARC
@@ -63,7 +63,7 @@ the forgotten cron job on some other host — before a policy starts
 discarding it.
 
 ```
-_dmarc.bogentech.no.  TXT  "v=DMARC1; p=none; rua=mailto:dmarc@bogentech.no; fo=1"
+_dmarc.example.com.  TXT  "v=DMARC1; p=none; rua=mailto:dmarc@example.com; fo=1"
 ```
 
 Tighten to `p=quarantine` and then `p=reject` once reports show only
@@ -102,11 +102,11 @@ practice:
 ## Verifying
 
 ```bash
-dig +short -x 217.170.199.x                   # PTR
-dig +short mail.bogentech.no                  # matches?
-dig +short TXT bogentech.no                   # SPF
-dig +short TXT s2026a._domainkey.bogentech.no # DKIM
-dig +short TXT _dmarc.bogentech.no            # DMARC
+dig +short -x 192.0.2.10                   # PTR
+dig +short mail.example.com                  # matches?
+dig +short TXT example.com                   # SPF
+dig +short TXT s2026a._domainkey.example.com # DKIM
+dig +short TXT _dmarc.example.com            # DMARC
 ```
 
 Then send one message to a Gmail address and read the received headers:
