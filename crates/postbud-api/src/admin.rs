@@ -54,6 +54,8 @@ pub fn router() -> Router<AppState> {
         )
         .route("/admin/api/bounces", get(bounces))
         .route("/admin/api/bounces/{id}/raw", get(bounce_raw))
+        .route("/admin/api/oidc/config", get(crate::oidc::config))
+        .route("/admin/api/oidc/token", post(crate::oidc::exchange))
 }
 
 // ------------------------------------------------------------------- auth
@@ -70,9 +72,9 @@ impl FromRequestParts<AppState> for Admin {
         parts: &mut Parts,
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
-        let Some(configured) = state.admin_token.as_deref() else {
+        if state.admin_token.is_none() && state.admin_oidc.is_none() {
             return Err(ApiError::AdminDisabled);
-        };
+        }
 
         let presented = parts
             .headers
@@ -82,14 +84,24 @@ impl FromRequestParts<AppState> for Admin {
             .map(str::trim)
             .ok_or(ApiError::Unauthorized)?;
 
-        // Compare digests, not strings: the comparison runs over two fixed
-        // 32-byte values, so its timing says nothing about where the first
-        // differing byte of the token was.
-        if postbud_core::apikey::hash(presented) != postbud_core::apikey::hash(configured) {
-            return Err(ApiError::Unauthorized);
+        // Path 1: the static token. Compare digests, not strings: the
+        // comparison runs over two fixed 32-byte values, so its timing
+        // says nothing about where the first differing byte was.
+        if let Some(configured) = state.admin_token.as_deref()
+            && postbud_core::apikey::hash(presented) == postbud_core::apikey::hash(configured)
+        {
+            return Ok(Admin);
         }
 
-        Ok(Admin)
+        // Path 2: an OIDC id_token — signature against the issuer's
+        // JWKS, iss/aud/exp, then the allowlist.
+        if let Some(oidc) = &state.admin_oidc
+            && oidc.verify(presented).await.is_ok()
+        {
+            return Ok(Admin);
+        }
+
+        Err(ApiError::Unauthorized)
     }
 }
 

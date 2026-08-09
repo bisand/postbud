@@ -22,6 +22,7 @@ fn app(admin_token: Option<&str>) -> axum::Router {
         pool,
         bounce_token: None,
         admin_token: admin_token.map(String::from),
+        admin_oidc: None,
     })
 }
 

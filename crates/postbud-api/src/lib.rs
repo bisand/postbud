@@ -12,6 +12,7 @@ pub mod auth;
 pub mod bounces;
 pub mod error;
 pub mod messages;
+pub mod oidc;
 pub mod suppressions;
 
 use axum::routing::{delete, get, post};
@@ -29,8 +30,12 @@ pub struct AppState {
     pub bounce_token: Option<String>,
     /// Token for the admin surface (`/admin`). Separate again: an admin
     /// mints and revokes tenant keys, a strictly greater privilege than
-    /// holding one. Unset means the surface is off and says so.
+    /// holding one. With OIDC configured this is the break-glass path;
+    /// with neither set the surface is off and says so.
     pub admin_token: Option<String>,
+    /// OIDC login for the admin surface (issuer-configurable relying
+    /// party + allowlist). See [`oidc::OidcAdmin`].
+    pub admin_oidc: Option<std::sync::Arc<oidc::OidcAdmin>>,
 }
 
 pub fn router(state: AppState) -> Router {

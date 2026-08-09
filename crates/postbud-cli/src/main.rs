@@ -78,6 +78,7 @@ async fn main() -> Result<()> {
                 pool,
                 bounce_token: std::env::var("BOUNCE_INGEST_TOKEN").ok(),
                 admin_token: std::env::var("ADMIN_TOKEN").ok(),
+                admin_oidc: postbud_api::oidc::OidcAdmin::from_env()?,
             });
             let listener = tokio::net::TcpListener::bind(&bind)
                 .await

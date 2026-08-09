@@ -1,5 +1,6 @@
 <script>
   import { auth, api } from "./lib/api.svelte.js";
+  import { fetchOidcConfig, beginLogin, completeLogin } from "./lib/oidc.js";
   import { icons } from "./lib/icons.js";
   import { THEMES, themePref, apply as applyTheme } from "./lib/theme.svelte.js";
   import Dashboard from "./lib/Dashboard.svelte";
@@ -35,28 +36,58 @@
     return () => window.removeEventListener("hashchange", onHash);
   });
 
-  // Login state. The token is validated by actually using it — one
-  // overview call — so a wrong token never gets stored.
+  // Login state. Credentials are validated by actually using them — one
+  // overview call — so a bad token never gets stored, and an OIDC login
+  // by someone off the allowlist gets a clear answer instead of a wall
+  // of 401s.
   let tokenInput = $state("");
   let loginError = $state("");
   let checking = $state(false);
+  let oidcCfg = $state(null);
+  let showTokenForm = $state(false);
+
+  async function validateSession() {
+    try {
+      await api("/overview");
+      return true;
+    } catch (err) {
+      loginError =
+        err.status === 503
+          ? "The admin surface is not configured on the server."
+          : err.status === 401 && oidcCfg?.enabled
+            ? "You are signed in, but this account is not on postbud's admin list."
+            : "That token was not accepted.";
+      return false;
+    }
+  }
+
+  // On load: finish an OIDC callback if this is one, then learn whether
+  // OIDC is available at all (drives which login button to show).
+  $effect(() => {
+    (async () => {
+      try {
+        const idToken = await completeLogin();
+        if (idToken) {
+          checking = true;
+          auth.set(idToken);
+          await validateSession();
+        }
+      } catch (err) {
+        loginError = err.message;
+      } finally {
+        checking = false;
+      }
+      oidcCfg = await fetchOidcConfig();
+    })();
+  });
 
   async function login(event) {
     event.preventDefault();
     checking = true;
     loginError = "";
     auth.set(tokenInput.trim());
-    try {
-      await api("/overview");
-      tokenInput = "";
-    } catch (err) {
-      loginError =
-        err.status === 503
-          ? "The admin surface is not configured on the server (ADMIN_TOKEN is unset)."
-          : "That token was not accepted.";
-    } finally {
-      checking = false;
-    }
+    if (await validateSession()) tokenInput = "";
+    checking = false;
   }
 
   const Active = $derived(
@@ -83,30 +114,59 @@
 {#if !auth.token}
   <div class="min-h-screen flex items-center justify-center bg-base-200 p-4">
     <div class="card bg-base-100 border border-base-300 w-full max-w-sm">
-      <form class="card-body gap-4" onsubmit={login}>
+      <div class="card-body gap-4">
         <div>
           <h1 class="card-title text-2xl">postbud</h1>
           <p class="text-sm opacity-70">outbound mail, administered</p>
         </div>
-        <label class="form-control">
-          <span class="label-text mb-1">Admin token</span>
-          <input
-            type="password"
-            class="input input-bordered w-full"
-            bind:value={tokenInput}
-            autocomplete="off"
-            required
-          />
-        </label>
+
         {#if loginError}
           <div class="alert alert-error text-sm py-2">{loginError}</div>
         {/if}
-        <button class="btn btn-primary" disabled={checking}>
-          {#if checking}<span class="loading loading-spinner loading-sm"></span>{/if}
-          Sign in
-        </button>
+
+        {#if oidcCfg === null}
+          <span class="loading loading-spinner"></span>
+        {:else}
+          {#if oidcCfg.enabled}
+            <button
+              class="btn btn-primary"
+              disabled={checking}
+              onclick={() => beginLogin(oidcCfg)}
+            >
+              {#if checking}<span class="loading loading-spinner loading-sm"></span>{/if}
+              Sign in with {new URL(oidcCfg.issuer).host}
+            </button>
+          {/if}
+
+          {#if !oidcCfg.enabled || showTokenForm}
+            <form class="flex flex-col gap-4" onsubmit={login}>
+              <label class="form-control">
+                <span class="label-text mb-1">Admin token</span>
+                <input
+                  type="password"
+                  class="input input-bordered w-full"
+                  bind:value={tokenInput}
+                  autocomplete="off"
+                  required
+                />
+              </label>
+              <button class="btn" disabled={checking}>
+                {#if checking}<span class="loading loading-spinner loading-sm"></span>{/if}
+                Sign in with token
+              </button>
+            </form>
+          {:else}
+            <button
+              class="btn btn-ghost btn-xs self-start"
+              onclick={() => (showTokenForm = true)}
+            >
+              Use the admin token instead
+            </button>
+          {/if}
+        {/if}
+
         <div class="text-sm">{@render themePicker()}</div>
-      </form>
+      </div>
     </div>
   </div>
 {:else}

@@ -169,13 +169,26 @@ detail is a route (`#messages/{id}`), so the browser's Back button returns
 to the list with its filters and page intact. The tenant list is
 deliberately unpaged — it is bounded by the number of sending systems.
 
-Authentication is a single `ADMIN_TOKEN`, deliberately separate from the
-tenant keys: a tenant key sends mail, the admin token mints and revokes
-tenant keys — a strictly greater privilege that must not be reachable from
-a leaked tenant credential. Unset, the surface answers an honest 503. The
-API port should never be on the public internet (firewall it to a private
-network); the token is defence in depth, not the only wall. The UI keeps
-the token in sessionStorage — it dies with the tab.
+Authentication has two independent paths:
+
+- **OIDC login** (optional): postbud is a relying party against any
+  spec-compliant issuer (`ADMIN_OIDC_ISSUER`, `ADMIN_OIDC_CLIENT_ID`).
+  The SPA runs authorization-code + PKCE; the code exchange is proxied
+  through `/admin/api/oidc/token` (no issuer CORS, optional client
+  secret stays server-side); API calls carry the id_token, verified
+  against the issuer's JWKS (iss, aud = our client id, exp, RS256).
+  The issuer owns accounts and passwords; **authorization stays here**:
+  `ADMIN_OIDC_USERS` is an allowlist of emails/subject ids, and a valid
+  login by anyone else is refused. Half-configuration fails at startup.
+- **`ADMIN_TOKEN`** — the break-glass and machine path, deliberately
+  separate from the tenant keys: a tenant key sends mail, the admin
+  credential mints and revokes tenant keys. An issuer outage must not
+  lock the operator out of their own mail admin.
+
+With neither configured the surface answers an honest 503. The API port
+should never be on the public internet (firewall it to a private
+network); these credentials are defence in depth, not the only wall. The
+UI keeps its credential in sessionStorage — it dies with the tab.
 
 Everything the admin can do is READ or STATE: the evidence tables
 (delivery attempts, bounce reports, suppression history) are only ever

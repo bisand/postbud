@@ -37,6 +37,15 @@ hex = "0.4"
 # Embeds the compiled admin UI (ui/admin/dist, checked in) into the
 # binary, so cargo never needs node.
 include_dir = "0.7"
+# OIDC id_token validation for the admin surface (RS256 against the
+# issuer's JWKS).
+jsonwebtoken = "9"
+# Talks to the OIDC issuer only: discovery, JWKS, and the proxied code
+# exchange. webpki-roots so the scratch image needs no CA bundle.
+reqwest = { version = "0.12", default-features = false, features = [
+    "rustls-tls-webpki-roots",
+    "json",
+] }
 # SMTP client only. postbud never resolves MX, never talks to the public
 # internet: it hands finished messages to Postfix, which owns delivery.
 lettre = { version = "0.11", default-features = false, features = [

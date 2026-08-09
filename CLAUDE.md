@@ -48,11 +48,15 @@ reputation checklist in [docs/dns.md](docs/dns.md).
   delivery record. Public port 25 is inbound bounces only
   (`reject_unauth_destination`).
 - **The admin surface** (`/admin`, docs/architecture.md §9) authenticates
-  with `ADMIN_TOKEN` — separate from tenant keys because it mints and
-  revokes them. Unset = honest 503. The UI is Svelte 5 + daisyUI in
-  `ui/admin/`, dist CHECKED IN and embedded via include_dir (cargo never
-  needs node); rebuild with `scripts/build-ui.sh`, CI fails when dist
-  drifts from source. Key rotation kills the old key atomically.
+  two ways: OIDC login (issuer-configurable RP, code+PKCE, id_token
+  verified against the issuer's JWKS, authorization = the
+  `ADMIN_OIDC_USERS` allowlist — the token proves identity, postbud
+  decides authorization) and `ADMIN_TOKEN` as the break-glass/machine
+  path. Neither set = honest 503; half-set OIDC fails at startup. The UI
+  is Svelte 5 + daisyUI in `ui/admin/`, dist CHECKED IN and embedded via
+  include_dir (cargo never needs node); rebuild with
+  `scripts/build-ui.sh`, CI fails when dist drifts from source. Key
+  rotation kills the old key atomically.
 - **Applied migrations are never edited** — sqlx checksums them. Their
   comments are part of the record, even where newer policy (like this
   file's genericity rule) would phrase them differently today.
