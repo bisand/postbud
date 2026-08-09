@@ -3,11 +3,12 @@
 //! Deliberately small and boring, in the shape callers already know from
 //! hosted providers: submit a message, get an id, ask about the id later.
 //!
-//! The API is the surface networco uses (its `IEmailService` has no
-//! implementation today, so this becomes its first one). regnid needs
-//! nothing here at all — it already speaks SMTP submission, so it points
-//! `SMTP_HOST` at the relay and keeps working unchanged.
+//! This is the ONLY way to send: the relay accepts submission solely from
+//! postbud's own delivery worker, so nothing can route around the
+//! suppression list, the dedup and the delivery record. regnid and
+//! networco both speak this API.
 
+pub mod admin;
 pub mod auth;
 pub mod bounces;
 pub mod error;
@@ -27,6 +28,10 @@ pub struct AppState {
     /// the GLOBAL suppression list — a different, and more dangerous,
     /// privilege than sending mail.
     pub bounce_token: Option<String>,
+    /// Token for the admin surface (`/admin`). Separate again: an admin
+    /// mints and revokes tenant keys, a strictly greater privilege than
+    /// holding one. Unset means the surface is off and says so.
+    pub admin_token: Option<String>,
 }
 
 pub fn router(state: AppState) -> Router {
@@ -38,6 +43,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/suppressions", post(suppressions::add))
         .route("/v1/suppressions/{id}", delete(suppressions::remove))
         .route("/v1/bounces", post(bounces::ingest))
+        .merge(admin::router())
         // A panic in one request becomes a 500, never a dead process that
         // stops delivering everyone else's mail.
         .layer(CatchPanicLayer::new())

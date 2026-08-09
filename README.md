@@ -76,16 +76,21 @@ curl -X POST localhost:8080/v1/messages \
        "subject":"Faktura 1001","text":"Vedlagt."}'
 ```
 
+With `ADMIN_TOKEN` set, `/admin` serves the admin UI: dashboard, delivery
+log, suppression list, tenant administration (including key rotation) and
+the raw bounce feed. See docs/architecture.md §9.
+
 ## Integrating
 
-**regnid needs no code change.** It already speaks SMTP submission
-(`src/transport.rs`: `MAIL_TRANSPORT=smtp`, `SMTP_HOST`, `SMTP_PORT`,
-`SMTP_TLS`). Point it at the relay and it keeps working; its JetStream rail
-can be retired later, on its own schedule, rather than as a precondition.
+**The HTTP API is the only way to send.** The relay accepts submission
+solely from postbud's delivery worker — nothing can relay around the
+suppression list, the idempotent dedup and the delivery record.
 
-**networco implements `IEmailService` against the HTTP API** — the interface
-in `apps/shared/Services/IEmailService.cs` currently has no implementation
-and no DI registration anywhere in the solution, so this is its first one.
+**regnid speaks the API** (`MAIL_TRANSPORT=postbud`, `POSTBUD_URL`,
+`POSTBUD_API_KEY`) — cut over in test and prod 2026-08-08.
+
+**networco implements `IEmailService` against the HTTP API** — the
+implementation lives in `apps/shared/Services/PostbudEmailService.cs`.
 
 **One rail, not two.** If postbud ends up running *beside* regnid's mail
 worker rather than in front of it, there are two suppression lists, they
@@ -100,6 +105,9 @@ That is the single decision that determines whether this helps.
 - `crates/postbud-relay` — the handoff to Postfix, and the worker loop.
 - `crates/postbud-api` — the HTTP API (axum).
 - `crates/postbud-cli` — the `postbud` binary.
+- `ui/admin` — the admin SPA (Svelte 5 + daisyUI); `dist/` is committed
+  and embedded into the binary, so building the Rust workspace never
+  needs node. Rebuild with `scripts/build-ui.sh`.
 - `docs/postfix/` — relay configuration, the bounce pipe, and DNS.
 
 ## Conventions

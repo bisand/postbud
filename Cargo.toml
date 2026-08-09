@@ -9,7 +9,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/bisand/postbud"
@@ -35,6 +35,9 @@ chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
 dotenvy = "0.15"
 hex = "0.4"
+# Embeds the compiled admin UI (ui/admin/dist, checked in) into the
+# binary, so cargo never needs node — regnmed's portal discipline.
+include_dir = "0.7"
 # SMTP client only. postbud never resolves MX, never talks to the public
 # internet: it hands finished messages to Postfix, which owns delivery.
 lettre = { version = "0.11", default-features = false, features = [

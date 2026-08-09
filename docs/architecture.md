@@ -120,6 +120,15 @@ losing that VM costs an IP address, not a secret. The DKIM private key
 exists in exactly one place and never in this repository — the same rule
 regnmed's secrets policy applies to the Maskinporten key.
 
+**Only the delivery worker may inject mail** (tightened 2026-08-09).
+Postfix's `mynetworks` is loopback plus the pod CIDR — the tailnet is
+deliberately NOT trusted, although the original setup trusted it. A
+tailnet CIDR would let any enrolled machine relay directly, bypassing the
+suppression list, the idempotent dedup and the delivery record; with the
+pod-only rule, every message on the wire has passed the API. Port 25 from
+the internet stays open solely for inbound bounces to the RCPT allowlist —
+`reject_unauth_destination` refuses relay from strangers as it always did.
+
 If the relay is down, postbud keeps accepting and queueing, and the
 `relayhost` escape hatch can point elsewhere while it is drained. If the
 cluster is down, the applications are down too, so there is nothing to send.
@@ -141,13 +150,41 @@ delivery attempts, the queue id and the bounce reports intact.
   (migration 0032) still waits on an MX that does not exist; standing that
   up means either a larger relay VM or content scanning in the cluster,
   and the second is the better answer.
-- **An SMTP submission listener in postbud.** regnid talks SMTP to the
-  relay directly. Writing a submission server here would only be worth it
-  to give SMTP callers the suppression list and the delivery record; if
-  that day comes, it is a component, not a redesign.
+- **An SMTP submission listener in postbud.** The API is the only way in.
+  regnid originally spoke SMTP to the relay; since the cutover it publishes
+  through the postbud API like everything else, and the relay no longer
+  accepts submission from anywhere but the delivery worker (section 6).
+  Writing a submission server here would only be worth it to give SMTP
+  callers the suppression list and the delivery record; if that day comes,
+  it is a component, not a redesign.
 - **Templates, scheduled sending, open/click tracking.** The applications
   own their content. Tracking pixels in particular are a reputation and
   privacy cost with no upside for transactional mail.
 - **Multiple relays / failover.** One relay, one IP, one reputation. Adding
   a second IP splits reputation at exactly the volume where it is already
   thin.
+
+## 9. The admin surface
+
+`/admin` is a Svelte 5 + daisyUI app compiled into `ui/admin/dist`
+(checked in, embedded into the binary with `include_dir` — cargo never
+needs node, regnmed's portal discipline; CI proves dist matches source).
+It serves a dashboard, the delivery log with per-message attempt history
+and joined bounces, the suppression list (block/lift, global or
+per-tenant), tenant administration (create, edit domains, deactivate,
+rotate key — rotation kills the old key in the same statement), and the
+raw bounce feed.
+
+Authentication is a single `ADMIN_TOKEN`, deliberately separate from the
+tenant keys: a tenant key sends mail, the admin token mints and revokes
+tenant keys — a strictly greater privilege that must not be reachable from
+a leaked tenant credential. Unset, the surface answers an honest 503. The
+NodePort is reachable only from loopback and the tailnet, so the admin UI
+is never on the public internet; the token is defence in depth, not the
+only wall. The UI keeps the token in sessionStorage — it dies with the
+tab.
+
+Everything the admin can do is READ or STATE: the evidence tables
+(delivery attempts, bounce reports, suppression history) are only ever
+read or superseded, never rewritten — lifting a suppression is a soft
+delete with `removed_by`, the same discipline as everywhere else.

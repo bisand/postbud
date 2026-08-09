@@ -46,3 +46,21 @@ jobs:
         env:
           DATABASE_URL: postgres://postbud:postbud@localhost:5432/postbud
         run: cargo run -p postbud-cli -- migrate
+
+  # ui/admin/dist is checked in and embedded into the binary; this job
+  # proves it was built from the checked-in source. Same guard as
+  # regnmed's portal job — without it, a source edit without a rebuild
+  # ships an admin UI that silently lags its own code.
+  admin-ui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: ui/admin/package-lock.json
+      - name: build
+        run: scripts/build-ui.sh
+      - name: dist matches source
+        run: git diff --exit-code ui/admin/dist

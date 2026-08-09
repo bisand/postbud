@@ -29,13 +29,16 @@ inet_protocols = ipv4
 
 # --------------------------------------------------- who may inject mail
 #
-# The tailnet address of the cluster, and nothing else. This is the whole
-# access-control model of the relay: postbud reaches it over Tailscale, so
-# the relay never needs to be reachable from the public internet for
-# submission, and no SASL credential crosses it.
+# The pod network of the cluster, and nothing else. This is the whole
+# access-control model of the relay: only postbud's delivery worker may
+# inject mail, so every message on the wire has passed the API -- the
+# suppression list, the dedup, the delivery record. The tailnet is
+# deliberately NOT here: a tailnet CIDR would let any enrolled machine
+# relay directly and bypass all of that (this was the original config,
+# tightened 2026-08-09).
 #
-# Replace with the actual tailnet CIDR. Do NOT add 0.0.0.0/0 "temporarily".
-mynetworks = 127.0.0.0/8, 100.64.0.0/10
+# Replace with the actual pod CIDR. Do NOT add 0.0.0.0/0 "temporarily".
+mynetworks = 127.0.0.0/8, 10.42.0.0/16
 
 smtpd_relay_restrictions =
     permit_mynetworks

@@ -10,6 +10,10 @@ target
 # Local dev database
 .dev/
 
+# Admin UI toolchain. dist/ is NOT ignored: it is checked in and embedded
+# into the binary, so cargo never needs node.
+ui/admin/node_modules/
+
 # macOS
 .DS_Store
 

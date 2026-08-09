@@ -11,6 +11,10 @@ pub enum ApiError {
     /// them, so it says what to fix.
     BadRequest(String),
     NotFound,
+    /// The admin surface was called but ADMIN_TOKEN is not configured.
+    /// Honest 503 rather than a 401 that sends someone hunting for a
+    /// mistyped token that does not exist.
+    AdminDisabled,
     /// Something on our side. The detail is logged, never returned — an
     /// error page is not a place to leak a connection string.
     Internal(anyhow::Error),
@@ -25,6 +29,10 @@ impl IntoResponse for ApiError {
             ),
             ApiError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg),
             ApiError::NotFound => (StatusCode::NOT_FOUND, "not found".to_string()),
+            ApiError::AdminDisabled => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "admin surface is not configured (ADMIN_TOKEN is unset)".to_string(),
+            ),
             ApiError::Internal(err) => {
                 eprintln!("postbud: internal error: {err:#}");
                 (

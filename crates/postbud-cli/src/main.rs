@@ -77,6 +77,7 @@ async fn main() -> Result<()> {
             let router = postbud_api::router(postbud_api::AppState {
                 pool,
                 bounce_token: std::env::var("BOUNCE_INGEST_TOKEN").ok(),
+                admin_token: std::env::var("ADMIN_TOKEN").ok(),
             });
             let listener = tokio::net::TcpListener::bind(&bind)
                 .await

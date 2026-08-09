@@ -34,6 +34,16 @@ reputation checklist in [docs/dns.md](docs/dns.md).
   random key needs no password hash) and shown exactly once.
 - **Message bodies are personal data** and are purged after
   `BODY_RETENTION_DAYS`; the delivery record is kept forever.
+- **The API is the only way to send** (2026-08-09). Postfix's `mynetworks`
+  is loopback + the pod CIDR; the tailnet is deliberately NOT trusted, so
+  nothing can relay around the suppression list and the delivery record.
+  Port 25 public is inbound bounces only (`reject_unauth_destination`).
+- **The admin surface** (`/admin`, docs/architecture.md §9) authenticates
+  with `ADMIN_TOKEN` — separate from tenant keys because it mints and
+  revokes them. Unset = honest 503. The UI is Svelte 5 + daisyUI in
+  `ui/admin/`, dist CHECKED IN and embedded via include_dir (cargo never
+  needs node); rebuild with `scripts/build-ui.sh`, CI fails when dist
+  drifts from source. Key rotation kills the old key atomically.
 
 ## Workspace layout
 
@@ -45,6 +55,8 @@ reputation checklist in [docs/dns.md](docs/dns.md).
 - `crates/postbud-api` — axum HTTP API. Adding `Tenant` as a handler
   argument is what protects a route — one seam, no endpoint can forget.
 - `crates/postbud-cli` — the `postbud` binary.
+- `ui/admin` — the admin SPA (Vite + Svelte 5 runes + Tailwind 4 +
+  daisyUI 5). `dist/` is committed; `scripts/build-ui.sh` refreshes it.
 - `docs/postfix/` — relay config, the bounce pipe, the RCPT allowlist.
 
 ## Development
@@ -75,11 +87,13 @@ documents what happens when it does.
 
 ## Status
 
-Scaffold, verified end to end against a real Postgres 18: submit, idempotent
-dedup, from-domain rejection, 401 on a bad key, bounce → queue-id join →
-global suppression, transient bounce correctly NOT suppressing, attachment
-stored with digest.
+In production at ServeTheWorld (k3s + Flux, GHCR images, tailnet-only
+API): regnid test AND prod deliver through postbud; SPF/DKIM/DMARC
+verified passing at Gmail. Admin surface live at `/admin` (dashboard,
+delivery log, suppressions, tenants incl. key rotation, bounce feed) —
+browser-verified. SMTP submission closed to everything but the worker.
 
 **Not built yet:** integration tests that skip politely without
-`DATABASE_URL` (the regnmed pattern), deploy manifests, a CI workflow, the
-relay VM itself, and the regnid cutover.
+`DATABASE_URL` (the regnmed pattern — only the admin-auth tests run
+DB-free today), the networco cutover (paused; code written in
+networco-app), and the PTR record (provider ticket pending).

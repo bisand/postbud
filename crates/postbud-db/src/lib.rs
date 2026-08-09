@@ -9,6 +9,7 @@
 //! TLS policy, no DSN generation. That is Postfix's job, and reimplementing
 //! it in Rust would be trading decades of edge cases for a weekend.
 
+pub mod admin;
 pub mod bounce;
 pub mod message;
 pub mod suppression;

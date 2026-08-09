@@ -1,0 +1,8 @@
+@import "tailwindcss";
+@plugin "daisyui";
+
+/* dist/ is checked in and lives next to src/. Without this exclusion
+   Tailwind's source detection scans the previous build's output for class
+   names, and the build's input depends on its own last output — regnmed
+   learned this the hard way (non-deterministic dist, CI red twice). */
+@source not "../dist";
