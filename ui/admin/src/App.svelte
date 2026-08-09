@@ -188,15 +188,46 @@
     </div>
   </div>
 {:else}
-  <div class="min-h-screen flex bg-base-200">
-    <!-- Vertical menu. Icons always; labels from sm up. -->
+  <div class="min-h-screen flex flex-col sm:flex-row bg-base-200">
+    <!-- Small screens: a sticky top bar with icon tabs. The vertical
+         rail cost 15% of a phone's width; the tables want it more. -->
+    <header
+      class="sm:hidden sticky top-0 z-10 bg-base-100 border-b border-base-300
+             flex items-center gap-1 px-2 py-1.5"
+    >
+      <span class="text-primary px-1 shrink-0">{@html icons.logo}</span>
+      <nav class="flex gap-1 overflow-x-auto grow">
+        {#each sections as s (s.id)}
+          <a
+            href={"#" + s.id}
+            title={s.label}
+            aria-label={s.label}
+            class="btn btn-sm btn-square shrink-0 {section === s.id
+              ? 'btn-primary'
+              : 'btn-ghost'}"
+          >
+            {@html icons[s.id]}
+          </a>
+        {/each}
+      </nav>
+      <button
+        class="btn btn-ghost btn-sm btn-square shrink-0"
+        title="Sign out"
+        aria-label="Sign out"
+        onclick={() => auth.clear()}
+      >
+        {@html icons.signout}
+      </button>
+    </header>
+
+    <!-- sm and up: the vertical menu, unchanged. -->
     <aside
-      class="w-14 sm:w-52 shrink-0 bg-base-100 border-r border-base-300
-             flex flex-col sticky top-0 h-screen"
+      class="w-52 shrink-0 bg-base-100 border-r border-base-300
+             hidden sm:flex flex-col sticky top-0 h-screen"
     >
       <div class="px-3 py-4 flex items-center gap-2">
         <span class="text-primary">{@html icons.logo}</span>
-        <span class="text-lg font-bold hidden sm:inline">postbud</span>
+        <span class="text-lg font-bold">postbud</span>
       </div>
 
       <nav class="flex flex-col gap-1 px-2 grow">
@@ -209,34 +240,34 @@
               : 'btn-ghost'}"
           >
             {@html icons[s.id]}
-            <span class="hidden sm:inline">{s.label}</span>
+            <span>{s.label}</span>
           </a>
         {/each}
       </nav>
 
       <div class="p-2 flex flex-col gap-2 border-t border-base-300 text-sm">
         {#if me.value}
-          <div class="hidden sm:block px-2 text-xs opacity-60 break-all">
+          <div class="px-2 text-xs opacity-60 break-all">
             {me.value.actor}
             <span class="badge badge-xs ml-1">{me.value.role}</span>
           </div>
         {/if}
-        <div class="hidden sm:block">{@render themePicker()}</div>
+        <div>{@render themePicker()}</div>
         <button
           class="btn btn-ghost btn-sm justify-start gap-3"
           title="Sign out"
           onclick={() => auth.clear()}
         >
           {@html icons.signout}
-          <span class="hidden sm:inline">Sign out</span>
+          <span>Sign out</span>
         </button>
         {#if config?.version}
-          <p class="hidden sm:block px-2 text-xs opacity-50">{config.version}</p>
+          <p class="px-2 text-xs opacity-50">{config.version}</p>
         {/if}
       </div>
     </aside>
 
-    <main class="p-4 grow max-w-6xl min-w-0">
+    <main class="p-3 sm:p-4 grow max-w-6xl min-w-0">
       <Active param={route.param} />
     </main>
   </div>

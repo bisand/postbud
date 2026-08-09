@@ -107,8 +107,8 @@
           <div><span class="opacity-60">Reply-to:</span> {detail.reply_to ?? "–"}</div>
           <div><span class="opacity-60">Created:</span> {fmtTime(detail.created_at)}</div>
           <div><span class="opacity-60">Completed:</span> {fmtTime(detail.completed_at)}</div>
-          <div><span class="opacity-60">Idempotency key:</span> <code class="text-xs">{detail.idempotency_key}</code></div>
-          <div><span class="opacity-60">Postfix queue id:</span> <code class="text-xs">{detail.relay_queue_id ?? "–"}</code></div>
+          <div class="break-all"><span class="opacity-60">Idempotency key:</span> <code class="text-xs">{detail.idempotency_key}</code></div>
+          <div class="break-all"><span class="opacity-60">Postfix queue id:</span> <code class="text-xs">{detail.relay_queue_id ?? "–"}</code></div>
         </div>
 
         {#if detail.last_error}
@@ -228,7 +228,14 @@
         <div class="overflow-x-auto">
           <table class="table table-sm">
             <thead>
-              <tr><th>Created</th><th>Tenant</th><th>Recipient</th><th>Subject</th><th>Status</th><th>Att.</th></tr>
+              <tr>
+                <th>Created</th>
+                <th class="hidden sm:table-cell">Tenant</th>
+                <th>Recipient</th>
+                <th class="hidden md:table-cell">Subject</th>
+                <th>Status</th>
+                <th class="hidden sm:table-cell">Att.</th>
+              </tr>
             </thead>
             <tbody>
               {#each rows as m (m.id)}
@@ -237,11 +244,11 @@
                   onclick={() => (location.hash = `#messages/${m.id}`)}
                 >
                   <td class="whitespace-nowrap">{fmtTime(m.created_at)}</td>
-                  <td>{m.tenant}</td>
+                  <td class="hidden sm:table-cell">{m.tenant}</td>
                   <td class="break-all">{m.rcpt_to}</td>
-                  <td class="max-w-xs truncate" title={m.subject}>{m.subject}</td>
+                  <td class="hidden md:table-cell max-w-xs truncate" title={m.subject}>{m.subject}</td>
                   <td><span class="badge badge-sm {badge[m.status] ?? ''}">{m.status}</span></td>
-                  <td>{m.attempts}</td>
+                  <td class="hidden sm:table-cell">{m.attempts}</td>
                 </tr>
               {:else}
                 <tr><td colspan="6" class="opacity-60">Nothing matched.</td></tr>

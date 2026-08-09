@@ -161,17 +161,25 @@
         <div class="overflow-x-auto">
           <table class="table table-sm">
             <thead>
-              <tr><th>Address</th><th>Scope</th><th>Reason</th><th>Source</th><th>Created</th><th>Lifted</th><th></th></tr>
+              <tr>
+                <th>Address</th>
+                <th class="hidden sm:table-cell">Scope</th>
+                <th>Reason</th>
+                <th class="hidden md:table-cell">Source</th>
+                <th class="hidden sm:table-cell">Created</th>
+                <th class="hidden md:table-cell">Lifted</th>
+                <th></th>
+              </tr>
             </thead>
             <tbody>
               {#each rows as s (s.id)}
                 <tr class={s.removed_at ? "opacity-50" : ""}>
                   <td class="break-all">{s.address}</td>
-                  <td>{s.tenant ?? "global"}</td>
+                  <td class="hidden sm:table-cell">{s.tenant ?? "global"}</td>
                   <td title={s.detail}>{s.reason}</td>
-                  <td>{s.source}</td>
-                  <td class="whitespace-nowrap">{fmtTime(s.created_at)}</td>
-                  <td class="whitespace-nowrap">
+                  <td class="hidden md:table-cell">{s.source}</td>
+                  <td class="hidden sm:table-cell whitespace-nowrap">{fmtTime(s.created_at)}</td>
+                  <td class="hidden md:table-cell whitespace-nowrap">
                     {s.removed_at ? `${fmtTime(s.removed_at)} by ${s.removed_by}` : "–"}
                   </td>
                   <td class="text-right whitespace-nowrap">

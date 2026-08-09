@@ -76,14 +76,22 @@
       <div class="overflow-x-auto">
         <table class="table table-sm">
           <thead>
-            <tr><th>Received</th><th>Recipient</th><th>Status</th><th>Class</th><th>Matched</th><th>Diagnostic</th><th></th></tr>
+            <tr>
+              <th>Received</th>
+              <th>Recipient</th>
+              <th class="hidden sm:table-cell">Status</th>
+              <th>Class</th>
+              <th class="hidden sm:table-cell">Matched</th>
+              <th class="hidden md:table-cell">Diagnostic</th>
+              <th></th>
+            </tr>
           </thead>
           <tbody>
             {#each rows as b (b.id)}
               <tr>
                 <td class="whitespace-nowrap">{fmtTime(b.received_at)}</td>
                 <td class="break-all">{b.final_rcpt ?? "–"}</td>
-                <td>{b.status_code ?? "–"}</td>
+                <td class="hidden sm:table-cell">{b.status_code ?? "–"}</td>
                 <td>
                   {#if b.classification === "permanent"}
                     <span class="badge badge-sm badge-error">permanent</span>
@@ -93,14 +101,14 @@
                     <span class="badge badge-sm badge-neutral">{b.classification ?? "unparsed"}</span>
                   {/if}
                 </td>
-                <td>
+                <td class="hidden sm:table-cell">
                   {#if b.message_id}
                     <span class="badge badge-sm badge-success">yes</span>
                   {:else}
                     <span class="badge badge-sm badge-warning">no</span>
                   {/if}
                 </td>
-                <td class="max-w-md truncate" title={b.diagnostic}>{b.diagnostic ?? "–"}</td>
+                <td class="hidden md:table-cell max-w-md truncate" title={b.diagnostic}>{b.diagnostic ?? "–"}</td>
                 <td><button class="btn btn-xs" onclick={() => showRaw(b.id)}>Raw</button></td>
               </tr>
             {:else}

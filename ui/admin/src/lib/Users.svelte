@@ -111,7 +111,13 @@
         <div class="overflow-x-auto">
           <table class="table table-sm">
             <thead>
-              <tr><th>Identity</th><th>Role</th><th>Granted</th><th>Ended</th><th class="text-right"></th></tr>
+              <tr>
+                <th>Identity</th>
+                <th>Role</th>
+                <th class="hidden sm:table-cell">Granted</th>
+                <th class="hidden md:table-cell">Ended</th>
+                <th class="text-right"></th>
+              </tr>
             </thead>
             <tbody>
               {#each rows as u (u.id)}
@@ -128,17 +134,18 @@
                       {u.role}
                     </span>
                   </td>
-                  <td class="whitespace-nowrap text-xs">
+                  <td class="hidden sm:table-cell whitespace-nowrap text-xs">
                     {fmtTime(u.created_at)}<br /><span class="opacity-60">by {u.created_by}</span>
                   </td>
-                  <td class="whitespace-nowrap text-xs">
+                  <td class="hidden md:table-cell whitespace-nowrap text-xs">
                     {#if u.ended_at}
                       {fmtTime(u.ended_at)}<br /><span class="opacity-60">by {u.ended_by}</span>
                     {:else}
                       –
                     {/if}
                   </td>
-                  <td class="text-right whitespace-nowrap">
+                  <td class="text-right">
+                    <div class="inline-flex flex-col sm:flex-row gap-1 items-end justify-end">
                     {#if !u.ended_at && me.write}
                       {#if confirmRole?.id === u.id}
                         <button class="btn btn-xs btn-error" onclick={() => setRole(u.id, confirmRole.role)}>
@@ -161,6 +168,7 @@
                         <button class="btn btn-xs" onclick={() => (confirmEnd = u.id)}>Remove</button>
                       {/if}
                     {/if}
+                    </div>
                   </td>
                 </tr>
               {:else}

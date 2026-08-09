@@ -131,7 +131,14 @@
         <div class="overflow-x-auto">
           <table class="table table-sm">
             <thead>
-              <tr><th>Name</th><th>Sending domains</th><th>7 d / total</th><th>Since</th><th>State</th><th class="text-right">Actions</th></tr>
+              <tr>
+                <th>Name</th>
+                <th>Sending domains</th>
+                <th class="hidden sm:table-cell">7 d / total</th>
+                <th class="hidden md:table-cell">Since</th>
+                <th class="hidden sm:table-cell">State</th>
+                <th class="text-right">Actions</th>
+              </tr>
             </thead>
             <tbody>
               {#each rows as t (t.id)}
@@ -148,23 +155,26 @@
                         <button class="btn btn-xs btn-ghost" onclick={() => (editDomains = null)}>Cancel</button>
                       </div>
                     {:else}
-                      <code class="text-xs">{t.from_domains.join(", ")}</code>
-                      <button
-                        class="btn btn-xs btn-ghost"
-                        onclick={() => (editDomains = { id: t.id, value: t.from_domains.join(", ") })}
-                      >
-                        Edit
-                      </button>
+                      <div class="flex flex-wrap items-center gap-1">
+                        <code class="text-xs break-all">{t.from_domains.join(", ")}</code>
+                        <button
+                          class="btn btn-xs btn-ghost"
+                          onclick={() => (editDomains = { id: t.id, value: t.from_domains.join(", ") })}
+                        >
+                          Edit
+                        </button>
+                      </div>
                     {/if}
                   </td>
-                  <td class="whitespace-nowrap">{t.messages_7d} / {t.messages_total}</td>
-                  <td class="whitespace-nowrap">{fmtTime(t.created_at)}</td>
-                  <td>
+                  <td class="hidden sm:table-cell whitespace-nowrap">{t.messages_7d} / {t.messages_total}</td>
+                  <td class="hidden md:table-cell whitespace-nowrap">{fmtTime(t.created_at)}</td>
+                  <td class="hidden sm:table-cell">
                     <span class="badge badge-sm {t.active ? 'badge-success' : 'badge-neutral'}">
                       {t.active ? "active" : "inactive"}
                     </span>
                   </td>
-                  <td class="text-right whitespace-nowrap">
+                  <td class="text-right">
+                    <div class="inline-flex flex-col sm:flex-row gap-1 items-end justify-end">
                     {#if confirmRotate === t.id}
                       <button class="btn btn-xs btn-error" onclick={() => rotate(t.id, t.name)}>
                         Confirm — old key dies now
@@ -181,6 +191,7 @@
                         {t.active ? "Deactivate" : "Reactivate"}
                       </button>
                     {/if}
+                    </div>
                   </td>
                 </tr>
               {:else}
