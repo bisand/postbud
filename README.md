@@ -1,5 +1,9 @@
 # postbud
 
+***Postbud*** *(Norwegian, "mail carrier"): the person who takes your
+letters and is responsible for them until they are delivered. That is
+the whole job description, and the reason for the name.*
+
 Self-hosted transactional mail. A small Rust service that accepts mail
 over HTTP, keeps it until it is delivered, remembers what happened to it,
 and never writes to an address that has already bounced.
