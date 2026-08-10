@@ -139,11 +139,11 @@ mod tests {
     #[test]
     fn a_fully_aligned_relay_is_valid() {
         let result = evaluate(
-            "postbud.bogentech.no",
+            "mail.example.com",
             &observed(
-                &["85.137.228.199"],
-                &["postbud.bogentech.no"],
-                Some("postbud.bogentech.no"),
+                &["198.51.100.7"],
+                &["mail.example.com"],
+                Some("mail.example.com"),
             ),
         );
         assert!(result.valid);
@@ -157,8 +157,8 @@ mod tests {
     #[test]
     fn a_missing_ptr_is_reported_as_missing_not_as_a_mismatch() {
         let result = evaluate(
-            "postbud.bogentech.no",
-            &observed(&["85.137.228.199"], &[], Some("postbud.bogentech.no")),
+            "mail.example.com",
+            &observed(&["198.51.100.7"], &[], Some("mail.example.com")),
         );
         assert!(!result.valid);
         assert_eq!(result.ptr.status, Status::Missing);
@@ -170,11 +170,11 @@ mod tests {
     #[test]
     fn a_generic_provider_ptr_is_a_mismatch() {
         let result = evaluate(
-            "postbud.bogentech.no",
+            "mail.example.com",
             &observed(
-                &["85.137.228.199"],
-                &["static-85-137-228-199.example-isp.net"],
-                Some("postbud.bogentech.no"),
+                &["198.51.100.7"],
+                &["static-198-51-100-7.example-isp.net"],
+                Some("mail.example.com"),
             ),
         );
         assert!(!result.valid);
@@ -187,10 +187,10 @@ mod tests {
     #[test]
     fn a_default_helo_fails_even_when_dns_is_right() {
         let result = evaluate(
-            "postbud.bogentech.no",
+            "mail.example.com",
             &observed(
-                &["85.137.228.199"],
-                &["postbud.bogentech.no"],
+                &["198.51.100.7"],
+                &["mail.example.com"],
                 Some("localhost.localdomain"),
             ),
         );
@@ -203,8 +203,8 @@ mod tests {
     #[test]
     fn an_unreadable_greeting_is_unknown_rather_than_failed() {
         let result = evaluate(
-            "postbud.bogentech.no",
-            &observed(&["85.137.228.199"], &["postbud.bogentech.no"], None),
+            "mail.example.com",
+            &observed(&["198.51.100.7"], &["mail.example.com"], None),
         );
         assert!(
             result.valid,
@@ -216,11 +216,11 @@ mod tests {
     #[test]
     fn names_compare_ignoring_case_and_the_root_dot() {
         let result = evaluate(
-            "postbud.bogentech.no",
+            "mail.example.com",
             &observed(
-                &["85.137.228.199"],
-                &["Postbud.BogenTech.No."],
-                Some("POSTBUD.bogentech.no"),
+                &["198.51.100.7"],
+                &["Mail.Example.Com."],
+                Some("MAIL.example.com"),
             ),
         );
         assert!(result.valid);
@@ -228,7 +228,7 @@ mod tests {
 
     #[test]
     fn a_host_that_resolves_nowhere_is_missing() {
-        let result = evaluate("postbud.bogentech.no", &observed(&[], &[], None));
+        let result = evaluate("mail.example.com", &observed(&[], &[], None));
         assert!(!result.valid);
         assert_eq!(result.forward.status, Status::Missing);
     }
@@ -238,11 +238,11 @@ mod tests {
     #[test]
     fn several_ptrs_pass_when_one_matches_and_the_rest_stay_visible() {
         let result = evaluate(
-            "postbud.bogentech.no",
+            "mail.example.com",
             &observed(
-                &["85.137.228.199"],
-                &["postbud.bogentech.no", "old-name.example.net"],
-                Some("postbud.bogentech.no"),
+                &["198.51.100.7"],
+                &["mail.example.com", "old-name.example.net"],
+                Some("mail.example.com"),
             ),
         );
         assert!(result.valid);

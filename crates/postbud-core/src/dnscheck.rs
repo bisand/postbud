@@ -111,8 +111,8 @@ fn check_spf(observed: &[String], expected: &str) -> RecordResult {
                 }
             }
         }
-        // The regnmed.no incident: a second v=spf1 record is a PermError
-        // for the WHOLE domain — even if one of them is the right one.
+        // Seen in production: a second v=spf1 record is a PermError for
+        // the WHOLE domain — even when one of the two is exactly right.
         n => RecordResult {
             status: Status::Mismatch,
             observed: Some(format!(
@@ -157,8 +157,9 @@ fn check_dkim(observed: &[String], expected_key: &str) -> RecordResult {
             };
         }
     }
-    // The postbud.networco.no incident: a record exists, the key is not
-    // the one the relay signs with — every signature fails verification.
+    // Seen in production: a record exists, but the key is not the one the
+    // relay signs with — every signature fails verification, and the
+    // record looks perfectly fine to the eye.
     RecordResult {
         status: Status::Mismatch,
         observed: Some("a DKIM record exists but its key is NOT the relay's signing key".into()),
@@ -349,10 +350,11 @@ mod tests {
     #[test]
     fn dmarc_walk_up_names_stop_at_the_registrable_domain() {
         assert_eq!(
-            dmarc_names("postbud.networco.no"),
+            dmarc_names("mail.sub.example.com"),
             vec![
-                "_dmarc.postbud.networco.no".to_string(),
-                "_dmarc.networco.no".to_string(),
+                "_dmarc.mail.sub.example.com".to_string(),
+                "_dmarc.sub.example.com".to_string(),
+                "_dmarc.example.com".to_string(),
             ]
         );
         assert_eq!(

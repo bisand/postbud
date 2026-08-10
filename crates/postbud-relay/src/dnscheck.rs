@@ -96,7 +96,7 @@ pub async fn observe(
 
 /// Read the hostname the relay announces in its SMTP greeting.
 ///
-/// `220 postbud.bogentech.no ESMTP` — the second field is the name the
+/// `220 mail.example.com ESMTP` — the second field is the name the
 /// relay calls itself, and it is what a receiver compares against the
 /// PTR. Read straight off the socket rather than through the SMTP
 /// client, which parses the greeting and throws the text away.
