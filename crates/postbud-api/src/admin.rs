@@ -1,15 +1,18 @@
 //! The admin surface: `/admin` (embedded UI) and `/admin/api/*`.
 //!
-//! Authentication is a single `ADMIN_TOKEN`, deliberately separate from the
-//! tenant keys: a tenant key sends mail, the admin token mints and revokes
-//! tenant keys — a strictly greater privilege that must not be reachable
-//! from a leaked tenant credential. When the variable is unset the whole
-//! surface answers 503 and says so, rather than pretending to be a login
-//! problem.
+//! Two ways in, both decided by the extractors below: an OIDC login
+//! (identity from the issuer, authorization from the admin-user table)
+//! and `ADMIN_TOKEN` as the break-glass path. Both are deliberately
+//! separate from the tenant keys: a tenant key sends mail, an admin
+//! credential mints and revokes tenant keys — a strictly greater
+//! privilege that must not be reachable from a leaked tenant credential.
+//! With neither configured the whole surface answers 503 and says so,
+//! rather than pretending to be a login problem.
 //!
-//! Exposure note: the API listens on a NodePort the host firewall only
-//! accepts from loopback and the tailnet, so this surface is never on the
-//! public internet. The token is defence in depth, not the only wall.
+//! Exposure note: the API must not listen on the public internet — ours
+//! is a NodePort the host firewall only accepts from loopback and the
+//! private network, with TLS in front of it (docs/architecture.md §9).
+//! These credentials are defence in depth, not the only wall.
 
 use axum::extract::{FromRequestParts, Path, Query, State};
 use axum::http::request::Parts;

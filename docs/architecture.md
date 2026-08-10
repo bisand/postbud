@@ -201,6 +201,19 @@ should never be on the public internet (firewall it to a private
 network); these credentials are defence in depth, not the only wall. The
 UI keeps its credential in sessionStorage — it dies with the tab.
 
+**Serving it over TLS on a private network.** The plain HTTP port stays
+reachable from the private network as the break-glass path, and a
+reverse proxy on the same host adds `https://<host>/admin` on 443. Ours
+is Tailscale Serve — a two-word command, an automatically renewed
+Let's Encrypt certificate, and no listener on any public interface —
+but any local proxy does. Worth doing even behind a VPN: the padlock
+means the browser treats the origin as SECURE, which is what
+`crypto.subtle`, service workers and cookie flags all gate on, and the
+plain-HTTP fallbacks that exist for insecure origins stop being needed.
+Remember to register the new origin's redirect URI with the OIDC issuer
+alongside the old one, or login works on one address and silently 400s
+on the other.
+
 Everything the admin can do is READ or STATE: the evidence tables
 (delivery attempts, bounce reports, suppression history) are only ever
 read or superseded, never rewritten — lifting a suppression is a soft
