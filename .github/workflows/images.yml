@@ -1,9 +1,18 @@
 name: images
 
+# Versioned images come from RELEASES, never from a bare tag. Pushing a tag
+# used to be enough, which made it possible to deploy a version whose only
+# description was its number -- and deploy/kustomization.yaml pins a release
+# tag, so that number is what an operator reads six months later when
+# something breaks. Requiring the release forces the notes to exist.
+#
+# main still builds, so a merge is testable as sha-<short> without inventing
+# a version for it.
 on:
   push:
     branches: [main]
-    tags: ["v*"]
+  release:
+    types: [published]
 
 jobs:
   build:
@@ -38,6 +47,13 @@ jobs:
             type=semver,pattern=v{{version}}
             type=sha,prefix=sha-,format=short
             type=raw,value=latest,enable={{is_default_branch}}
+            # Belt and braces on the one tag a deploy actually pins. The
+            # semver patterns above derive it from the git ref, which is
+            # the tag on a release event too -- but if that ever stopped
+            # matching, the image would build "successfully" without the
+            # tag deploy/kustomization.yaml points at, and the failure
+            # would show up as an ImagePullBackOff in the cluster.
+            type=raw,value=${{ github.event.release.tag_name }},enable=${{ github.event_name == 'release' }}
 
       # The relay is amd64. No arm64 build until something needs it --
       # every extra platform doubles the build for no one.
