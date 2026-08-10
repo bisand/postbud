@@ -12,6 +12,7 @@ use sqlx::PgPool;
 use sqlx::postgres::PgListener;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::Notify;
 use tokio::task::JoinSet;
 
 use crate::{Outcome, Relay};
@@ -84,12 +85,12 @@ pub async fn run(pool: PgPool, relay: Relay, config: Config) -> anyhow::Result<(
     tokio::spawn(crate::dnscheck::run(pool.clone()));
 
     let relay = Arc::new(relay);
-    let mut wake = wake_listener(&pool).await;
+    let wake = spawn_wake_listener(&pool);
 
     loop {
         let claimed = message::claim(&pool, &config.worker_name, config.batch).await?;
         if claimed.is_empty() {
-            wait_for_work(wake.as_mut(), config.idle).await;
+            wait_for_work(&wake, config.idle).await;
             continue;
         }
 
@@ -129,29 +130,64 @@ async fn join_one(deliveries: &mut JoinSet<()>) {
     }
 }
 
-/// Subscribe to accept notifications, if we can.
+/// How long to wait before rebuilding a listener that gave up.
+const LISTENER_RETRY: Duration = Duration::from_secs(30);
+
+/// Listen for accept notifications in a task of its own, and turn them
+/// into a flag the delivery loop can wait on.
 ///
-/// Failure is not fatal and deliberately quiet about consequences: without
-/// the subscription the worker simply polls, exactly as it did before this
-/// existed. Latency is the only thing at stake.
-async fn wake_listener(pool: &PgPool) -> Option<PgListener> {
-    let mut listener = match PgListener::connect_with(pool).await {
-        Ok(listener) => listener,
-        Err(err) => {
-            eprintln!("postbud: queue notifications unavailable ({err}); polling only");
-            return None;
+/// The task exists to keep `PgListener::recv` out of the delivery loop.
+/// sqlx does not document it as cancel-safe, and the loop would have to
+/// abandon it on every idle timeout — a dropped notification would cost
+/// only latency, but a hot loop is no place for that question. `Notify`
+/// answers it: waiting on it IS cancel-safe, and a wake-up arriving while
+/// the worker is busy is remembered rather than lost.
+///
+/// Failure is not fatal. Without a listener the flag simply never fires
+/// and the worker polls, exactly as it did before any of this existed.
+fn spawn_wake_listener(pool: &PgPool) -> Arc<Notify> {
+    let wake = Arc::new(Notify::new());
+    let signal = Arc::clone(&wake);
+    let pool = pool.clone();
+
+    tokio::spawn(async move {
+        loop {
+            match subscribe(&pool).await {
+                Some(mut listener) => {
+                    // recv() reconnects transparently; returning at all
+                    // means the subscription is beyond saving.
+                    while listener.recv().await.is_ok() {
+                        signal.notify_one();
+                    }
+                    eprintln!("postbud: queue notifications dropped out; will resubscribe");
+                }
+                None => {
+                    eprintln!("postbud: queue notifications unavailable; polling meanwhile");
+                }
+            }
+            tokio::time::sleep(LISTENER_RETRY).await;
         }
-    };
-    match listener.listen(message::QUEUE_CHANNEL).await {
-        Ok(()) => Some(listener),
-        Err(err) => {
+    });
+
+    wake
+}
+
+async fn subscribe(pool: &PgPool) -> Option<PgListener> {
+    let mut listener = PgListener::connect_with(pool)
+        .await
+        .inspect_err(|err| eprintln!("postbud: listener connection failed: {err}"))
+        .ok()?;
+    listener
+        .listen(message::QUEUE_CHANNEL)
+        .await
+        .inspect_err(|err| {
             eprintln!(
-                "postbud: could not listen on {} ({err}); polling only",
+                "postbud: could not listen on {}: {err}",
                 message::QUEUE_CHANNEL
-            );
-            None
-        }
-    }
+            )
+        })
+        .ok()?;
+    Some(listener)
 }
 
 /// Wait for something to do: a notification, or `idle` elapsing.
@@ -159,24 +195,8 @@ async fn wake_listener(pool: &PgPool) -> Option<PgListener> {
 /// The timeout is not a fallback for lost notifications alone — a retry
 /// becomes due at a time in the future that nothing can NOTIFY about when
 /// it arrives, so the poll is load-bearing and stays.
-async fn wait_for_work(wake: Option<&mut PgListener>, idle: Duration) {
-    let Some(wake) = wake else {
-        tokio::time::sleep(idle).await;
-        return;
-    };
-    match tokio::time::timeout(idle, wake.recv()).await {
-        // Something was just accepted.
-        Ok(Ok(_)) => {}
-        // The listener connection is in trouble. sqlx reconnects and
-        // re-subscribes on its own; sleeping here keeps a persistent
-        // failure from becoming a spin.
-        Ok(Err(err)) => {
-            eprintln!("postbud: queue notification error ({err}); polling");
-            tokio::time::sleep(idle).await;
-        }
-        // The ordinary poll.
-        Err(_) => {}
-    }
+async fn wait_for_work(wake: &Notify, idle: Duration) {
+    let _ = tokio::time::timeout(idle, wake.notified()).await;
 }
 
 /// One message, start to finish.
