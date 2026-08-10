@@ -121,11 +121,21 @@ export function beginLogin(cfg) {
 /// of a sign-out button on a shared machine.
 ///
 /// The id_token is sent as `id_token_hint` so the issuer can end the
-/// session without a confirmation round-trip. No
-/// `post_logout_redirect_uri`: it must be pre-registered on the client,
-/// and an unregistered one is a hard error at a spec-compliant issuer —
-/// landing on the issuer's own "signed out" page is a smaller price than
-/// a sign-out that 400s.
+/// session without a confirmation round-trip, and
+/// `post_logout_redirect_uri` brings the browser BACK here afterwards.
+///
+/// That last part was left out at first, on the reasoning that an
+/// unregistered URI is a hard 400 and the issuer's own "signed out" page
+/// is a smaller price. It is not: that page's only way onward is the
+/// issuer's bare login, which has no pending authorize request and
+/// therefore finishes at the issuer's account page. Signing out of
+/// postbud stranded the operator on the IdP, with no route back.
+///
+/// The URI must be REGISTERED on the client — this exact admin origin
+/// plus `/admin`, the same value used as the login redirect_uri, so an
+/// installation that can log in can also log out. `client_id` rides
+/// along so the issuer can validate the URI even when there is no
+/// id_token to read it from.
 ///
 /// Returns false when the issuer advertises no end-session endpoint, so
 /// the caller can still clear local state and say what happened.
@@ -133,6 +143,8 @@ export function endIssuerSession(cfg, idToken) {
   if (!cfg?.end_session_endpoint) return false;
   const url = new URL(cfg.end_session_endpoint);
   if (idToken) url.searchParams.set("id_token_hint", idToken);
+  if (cfg.client_id) url.searchParams.set("client_id", cfg.client_id);
+  url.searchParams.set("post_logout_redirect_uri", redirectUri());
   location.assign(url);
   return true;
 }
