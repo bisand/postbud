@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="96" height="96"
+     fill="none" stroke="#7c6cf0" stroke-width="1.8"
+     stroke-linecap="round" stroke-linejoin="round"
+     role="img" aria-label="postbud">
+  <title>postbud</title>
+  <!-- An envelope already in motion: the speed lines behind it are the
+       whole idea. The admin UI draws the same geometry from
+       ui/admin/src/lib/icons.js, in currentColor; this copy carries an
+       explicit stroke so it reads on both a light and a dark README. -->
+  <rect x="7" y="6" width="14.5" height="11.5" rx="2"/>
+  <path d="M7.5 7.5l6.75 5 6.75-5"/>
+  <path d="M2 9.25h3.5"/>
+  <path d="M0.9 12h4.6"/>
+  <path d="M2 14.75h3.5"/>
+</svg>

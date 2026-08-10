@@ -1,3 +1,5 @@
+<img src="docs/logo.svg" alt="" width="72" align="right">
+
 # postbud
 
 ***Postbud*** *(Norwegian, "mail carrier"): the person who takes your
@@ -99,6 +101,70 @@ application's own mail path rather than in front of it, there are two
 suppression lists, they disagree, and one system keeps mailing addresses
 the other knows are dead. That is the single decision that determines
 whether this helps.
+
+## Becoming a sender receivers trust
+
+Mail that leaves an unknown IP with nothing vouching for it goes to spam,
+or is refused outright. None of what follows is postbud-specific — it is
+what any self-hosted sender must do — but postbud checks all of it
+continuously and shows you where you stand, so the answer to "are we set
+up correctly?" is a page rather than an afternoon.
+
+Everything here was learned doing it. Each step says what breaks if you
+skip it.
+
+**1. A relay with its own address.** The relay needs its own IPv4, not
+shared with anything else you run. Reputation attaches to the IP, so
+sharing one means inheriting whatever the neighbour does. Ask the host to
+permit outbound port 25 while you are there — most block it by default,
+and some only say so once you try.
+
+**2. Reverse DNS (PTR), and the forward record to confirm it.** Ask
+whoever owns the address to point its PTR at your relay's hostname, then
+make sure that hostname resolves back to the same address. This is the
+one record you cannot publish yourself, and it is the most common reason
+a new relay is refused before any content is seen. Set Postfix's
+`myhostname` and `smtp_helo_name` to the same name — receivers compare
+all three, and a mismatch scores against you even when DNS is perfect.
+
+**3. SPF**, in the sending domain's zone: `v=spf1 ip4:<relay ip> -all`.
+Publish exactly one. A second `v=spf1` record on the same name is a
+PermError for the *whole* domain (RFC 7208), so a domain with two records
+— even when one is right — is treated as having none.
+
+**4. DKIM.** OpenDKIM on the relay signs with a private key that exists
+only there; publish the matching public key at
+`<selector>._domainkey.<domain>`. A record whose key is *not* the one the
+relay signs with looks perfectly fine to the eye and fails at every
+receiver, so postbud compares the published key against the signing key
+byte for byte rather than merely checking that a record exists.
+
+**5. DMARC**: `v=DMARC1; p=none` to begin with, at `_dmarc.<domain>`.
+Start at `p=none` and read the reports before tightening — a stricter
+policy published before the other records are right rejects your own mail.
+
+**6. An MX for bounces**, pointing at the relay. Bounces are how the
+suppression list learns anything; without a route home, a dead address
+stays in your sending list forever.
+
+**7. Register the domain in postbud** — Domains → Register domain, with
+the expected SPF, the DKIM selector and public key, and the MX. The admin
+UI renders these as paste-ready DNS rows, and from then on the worker
+checks reality against them every 15 minutes until everything is green,
+then daily. DNS does not only start wrong; it also breaks later, and a
+green badge that cannot turn red again is a lie.
+
+Set `RELAY_PUBLIC_HOST` and the same page also verifies the relay's own
+identity — forward DNS, the PTR, and the hostname it announces in its
+SMTP greeting.
+
+Two honest notes. Checks query **public resolvers** (Cloudflare, then
+Google) rather than the relay's own, because a host's ISP resolver once
+served a cached NXDOMAIN long after the records were published and the
+checker reported "missing" for records that were live everywhere else;
+the question is what the world's receivers see. And warming matters:
+a brand-new IP sending a large burst on day one looks exactly like a
+compromised host. Start small and grow.
 
 ## Layout
 
