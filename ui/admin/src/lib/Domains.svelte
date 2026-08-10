@@ -2,6 +2,7 @@
   import { api, me, fmtTime } from "./api.svelte.js";
 
   let rows = $state(null);
+  let relay = $state(null);
   let error = $state("");
   let notice = $state("");
   let confirmEnd = $state(null);
@@ -17,7 +18,12 @@
   async function load() {
     error = "";
     try {
-      rows = await api("/domains");
+      // The relay's identity is not a property of any one domain — it is
+      // the machine all of them leave from — so it loads beside the list
+      // rather than inside it.
+      const [domainRows, relayView] = await Promise.all([api("/domains"), api("/relay")]);
+      rows = domainRows;
+      relay = relayView;
     } catch (e) {
       error = e.message;
     }
@@ -98,6 +104,71 @@
 <div class="flex flex-col gap-4">
   {#if notice}<div class="alert alert-success text-sm py-2">{notice}</div>{/if}
   {#if error}<div class="alert alert-error text-sm py-2">{error}</div>{/if}
+
+  {#if relay}
+    <div class="card bg-base-100 border {relay.check?.valid ? 'border-success/40' : 'border-base-300'}">
+      <div class="card-body gap-3">
+        <div>
+          <h2 class="card-title text-base">
+            Relay identity
+            {#if relay.expected_host}<span class="font-mono text-sm opacity-70">{relay.expected_host}</span>{/if}
+          </h2>
+          <p class="text-xs opacity-60">
+            {#if !relay.expected_host}
+              RELAY_PUBLIC_HOST is not set — nothing to check against.
+            {:else if relay.check}
+              last checked {fmtTime(relay.check.checked_at)} —
+              {#if relay.check.valid}
+                <span class="text-success font-semibold">verified</span>, re-checked daily
+              {:else}
+                <span class="text-warning font-semibold">not verified</span>, re-checked every 15 min
+              {/if}
+            {:else}
+              never checked yet — the worker picks it up within a minute
+            {/if}
+          </p>
+        </div>
+
+        {#if relay.check}
+          <div class="overflow-x-auto">
+            <table class="table table-sm">
+              <tbody>
+                <!-- Status first, like the domain tables: on a narrow screen
+                     the row scrolls, and the verdict is the one column that
+                     must never be the part that scrolls away. -->
+                {#each [["forward", "Forward DNS", "the host resolves to the address mail comes from"], ["ptr", "Reverse DNS (PTR)", "that address resolves back to the host"], ["helo", "SMTP greeting", "the relay announces the same host"]] as [kind, label, why]}
+                  <tr>
+                    <td class="align-top">
+                      {#if relay.check[`${kind}_status`]}
+                        <span class="badge badge-sm {badgeClass[relay.check[`${kind}_status`]] ?? ''}">
+                          {relay.check[`${kind}_status`]}
+                        </span>
+                      {:else}
+                        <!-- helo only: the relay was unreachable. Our outage,
+                             never its configuration. -->
+                        <span class="badge badge-sm badge-ghost" title="the relay could not be reached">unknown</span>
+                      {/if}
+                    </td>
+                    <td class="align-top">
+                      <div>{label}</div>
+                      <div class="text-xs opacity-50">{why}</div>
+                    </td>
+                    <td class="align-top font-mono text-xs opacity-70 break-all">
+                      {relay.check[`${kind}_observed`] ?? "–"}
+                    </td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+          </div>
+          <p class="text-xs opacity-60">
+            Receivers judge a sending IP on all three agreeing. The PTR is set by
+            whoever owns the address, not in any zone you control here.
+          </p>
+        {/if}
+      </div>
+    </div>
+  {/if}
 
   {#if !rows}
     <span class="loading loading-spinner"></span>

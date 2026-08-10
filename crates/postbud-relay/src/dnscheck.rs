@@ -11,6 +11,7 @@
 use hickory_resolver::TokioAsyncResolver;
 use hickory_resolver::error::{ResolveError, ResolveErrorKind};
 use postbud_core::dnscheck::{self, Expected, Observed};
+use postbud_core::rdns;
 use sqlx::PgPool;
 use std::time::Duration;
 
@@ -91,6 +92,108 @@ pub async fn observe(
         dmarc_found_at,
         mx,
     })
+}
+
+/// Read the hostname the relay announces in its SMTP greeting.
+///
+/// `220 postbud.bogentech.no ESMTP` — the second field is the name the
+/// relay calls itself, and it is what a receiver compares against the
+/// PTR. Read straight off the socket rather than through the SMTP
+/// client, which parses the greeting and throws the text away.
+///
+/// Every failure returns None: an unreachable relay is our outage, and
+/// recording it as a bad identity would leave a lie in the history.
+async fn smtp_banner_host(host: &str, port: u16) -> Option<String> {
+    use tokio::io::{AsyncBufReadExt, BufReader};
+    use tokio::net::TcpStream;
+
+    let connect = tokio::time::timeout(Duration::from_secs(10), TcpStream::connect((host, port)));
+    let stream = connect.await.ok()?.ok()?;
+
+    let mut reader = BufReader::new(stream);
+    let mut line = String::new();
+    tokio::time::timeout(Duration::from_secs(10), reader.read_line(&mut line))
+        .await
+        .ok()?
+        .ok()?;
+
+    // "220 <host> ESMTP ..." — anything else is not a greeting we can
+    // read a name out of, and guessing would be worse than not checking.
+    let mut fields = line.split_whitespace();
+    if fields.next()? != "220" {
+        return None;
+    }
+    let name = fields.next()?.trim_end_matches('.').to_ascii_lowercase();
+    (!name.is_empty()).then_some(name)
+}
+
+/// Look up the relay's identity: forward addresses, their PTR names, and
+/// the greeting it answers with.
+pub async fn observe_relay(
+    resolver: &TokioAsyncResolver,
+    host: &str,
+    smtp_host: &str,
+    smtp_port: u16,
+) -> Result<rdns::Observed, ResolveError> {
+    let forward_ips: Vec<std::net::IpAddr> = empty_if_absent(resolver.lookup_ip(host).await)?
+        .map(|l| l.iter().collect())
+        .unwrap_or_default();
+
+    let mut ptr_names = Vec::new();
+    for ip in &forward_ips {
+        if let Some(lookup) = empty_if_absent(resolver.reverse_lookup(*ip).await)? {
+            for name in lookup.iter() {
+                let name = name.to_string().trim_end_matches('.').to_ascii_lowercase();
+                if !ptr_names.contains(&name) {
+                    ptr_names.push(name);
+                }
+            }
+        }
+    }
+
+    Ok(rdns::Observed {
+        forward_ips: forward_ips.iter().map(|ip| ip.to_string()).collect(),
+        ptr_names,
+        banner_host: smtp_banner_host(smtp_host, smtp_port).await,
+    })
+}
+
+/// Check the relay's identity when due. Silent no-op when
+/// `RELAY_PUBLIC_HOST` is unset — an installation that has not told us
+/// what its relay should be called cannot be told it is wrong.
+async fn run_relay_check(pool: &PgPool, resolver: &TokioAsyncResolver) -> anyhow::Result<()> {
+    let Ok(host) = std::env::var("RELAY_PUBLIC_HOST") else {
+        return Ok(());
+    };
+    let host = host.trim().trim_end_matches('.').to_ascii_lowercase();
+    if host.is_empty() {
+        return Ok(());
+    }
+
+    if !postbud_db::relay::due(pool, RECHECK_MINUTES, REVALIDATE_HOURS).await? {
+        return Ok(());
+    }
+
+    // The SMTP hop is the one the worker actually submits through, which
+    // on this deployment is a private address; the PUBLIC name is what
+    // DNS is asked about. They are deliberately separate inputs.
+    let smtp_host = std::env::var("RELAY_HOST").unwrap_or_else(|_| host.clone());
+    let smtp_port: u16 = std::env::var("RELAY_PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(25);
+
+    let observed = match observe_relay(resolver, &host, &smtp_host, smtp_port).await {
+        Ok(o) => o,
+        Err(e) => {
+            eprintln!("postbud: relay identity check skipped: {e}");
+            return Ok(());
+        }
+    };
+
+    let result = rdns::evaluate(&host, &observed);
+    postbud_db::relay::record_check(pool, &host, &result).await?;
+    Ok(())
 }
 
 /// Check every due domain once. Returns how many were checked.
@@ -175,6 +278,12 @@ pub async fn run(pool: PgPool) {
     loop {
         if let Err(e) = run_due_checks(&pool, &resolver).await {
             eprintln!("postbud: domain check round failed: {e:#}");
+        }
+        // The relay's own identity, on the same cadence. Separate from the
+        // domain loop because it is not a property of any one domain: it
+        // is the machine every domain's mail leaves from.
+        if let Err(e) = run_relay_check(&pool, &resolver).await {
+            eprintln!("postbud: relay identity check failed: {e:#}");
         }
         tokio::time::sleep(TICK).await;
     }

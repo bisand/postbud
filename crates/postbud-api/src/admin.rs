@@ -58,6 +58,7 @@ pub fn router() -> Router<AppState> {
         .route("/admin/api/bounces", get(bounces))
         .route("/admin/api/bounces/{id}/raw", get(bounce_raw))
         .route("/admin/api/me", get(me))
+        .route("/admin/api/relay", get(relay_identity))
         .route("/admin/api/domains", get(domains).post(domain_add))
         .route("/admin/api/domains/{id}", axum::routing::delete(domain_end))
         .route("/admin/api/users", get(users).post(user_add))
@@ -495,6 +496,36 @@ async fn domains(State(state): State<AppState>, _admin: Admin) -> ApiResult<Json
             })
             .collect(),
     ))
+}
+
+#[derive(Debug, serde::Serialize)]
+struct RelayView {
+    /// The name the relay is expected to answer to, from
+    /// `RELAY_PUBLIC_HOST`. None when the installation has not configured
+    /// one — nothing is checked then, and the UI says so rather than
+    /// showing a green tick for a question nobody asked.
+    expected_host: Option<String>,
+    check: Option<postbud_db::relay::RelayCheckRow>,
+}
+
+/// The relay's own identity: forward DNS, PTR, and the SMTP greeting.
+///
+/// Read-only and unconditional — there is one relay by design, so there
+/// is nothing here to create or delete, and the worker is what refreshes
+/// it.
+async fn relay_identity(
+    State(state): State<AppState>,
+    _admin: Admin,
+) -> ApiResult<Json<RelayView>> {
+    let expected_host = std::env::var("RELAY_PUBLIC_HOST")
+        .ok()
+        .map(|h| h.trim().trim_end_matches('.').to_ascii_lowercase())
+        .filter(|h| !h.is_empty());
+
+    Ok(Json(RelayView {
+        expected_host,
+        check: postbud_db::relay::latest(&state.pool).await?,
+    }))
 }
 
 #[derive(Debug, Deserialize)]

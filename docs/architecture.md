@@ -294,3 +294,25 @@ live and correct everywhere else. The verdict must not depend on which
 resolver the relay happens to be configured with; the question is what
 the world's receivers see. `DNS_RESOLVERS` overrides (comma-separated
 IPs, or `system` to restore the old behaviour).
+
+**The relay's own identity is checked too**, on the same cadence and
+shown above the domain list. A sending domain can have perfect SPF, DKIM
+and DMARC and still be scored down, because receivers also judge the
+machine mail came from on a three-way agreement: the host resolves
+forward to the sending address, that address resolves back to the host
+(the PTR), and the SMTP greeting announces the same host. Two of those
+three rot silently — a provider hands out a generic PTR unless asked, and
+a relay rebuilt from a fresh image greets as `localhost.localdomain`
+until `myhostname` is set. Neither breaks a test send; both cost
+reputation at the receivers that matter most.
+
+`RELAY_PUBLIC_HOST` names what the relay should be called, deliberately
+separate from `RELAY_HOST` (the private address mail is submitted
+through). Unset means the check is off, and the UI says so rather than
+showing a tick for a question nobody asked. The greeting is read straight
+off the socket; a relay that cannot be reached records `unknown` rather
+than a failure, because that is our outage and writing it down as a
+misconfiguration would leave a lie in the history that outlives it.
+There is one relay by design, so the expected host is configuration and
+only the evidence is a table — `relay_check`, insert-only, migration
+0005.

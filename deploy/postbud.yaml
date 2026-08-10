@@ -51,6 +51,11 @@ spec:
           env:
             - name: BIND_ADDR
               value: "0.0.0.0:8080"
+            # Only to REPORT what the relay was expected to be called; the
+            # worker is what actually checks it. Kept in step with the
+            # worker's copy below.
+            - name: RELAY_PUBLIC_HOST
+              value: "postbud.bogentech.no"
           envFrom:
             - secretRef:
                 name: postbud-secrets
@@ -116,6 +121,12 @@ spec:
               value: "25"
             - name: RELAY_TLS
               value: "none"
+            # The relay's PUBLIC identity, deliberately separate from
+            # RELAY_HOST above: that one is the private address the worker
+            # submits through, this is the name the world resolves and the
+            # PTR must point back to. Unset = the identity check is off.
+            - name: RELAY_PUBLIC_HOST
+              value: "postbud.bogentech.no"
             - name: WORKER_BATCH
               value: "20"
             # Deliveries in flight at once, per pod. The batch used to be

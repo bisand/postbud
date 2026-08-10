@@ -9,6 +9,7 @@ pub mod apikey;
 pub mod authz;
 pub mod dnscheck;
 pub mod dsn;
+pub mod rdns;
 pub mod retry;
 
 /// What a delivery attempt or a bounce means for the message.
