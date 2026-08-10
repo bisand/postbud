@@ -240,3 +240,12 @@ and fails at every receiver. DMARC follows the inheritance walk toward
 the organizational domain, and a resolver failure SKIPS the check rather
 than recording it — an outage at our resolver must not be written down
 as every domain suddenly losing its DNS.
+
+Checks use PUBLIC resolvers (Cloudflare, then Google), not the host's
+own — found the hard way. A relay's ISP resolver had cached NXDOMAIN for
+a name from before its records were published and kept serving that
+negative answer, so the checker reported "missing" for records that were
+live and correct everywhere else. The verdict must not depend on which
+resolver the relay happens to be configured with; the question is what
+the world's receivers see. `DNS_RESOLVERS` overrides (comma-separated
+IPs, or `system` to restore the old behaviour).

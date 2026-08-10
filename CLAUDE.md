@@ -68,6 +68,9 @@ reputation checklist in [docs/dns.md](docs/dns.md).
   pure in `postbud-core::dnscheck` and encode the two real incidents:
   duplicate SPF = PermError even if one matches, and DKIM compared to
   the signing key byte-for-byte. Resolver failure skips, never records.
+  Lookups go to PUBLIC resolvers (Cloudflare/Google), never the host's:
+  an ISP resolver serving a stale NXDOMAIN made the checker report
+  "missing" for live records. `DNS_RESOLVERS` overrides.
   Checks are insert-only history. `DNS_SPF_DEFAULT` prefills new
   domains.
 - **Applied migrations are never edited** — sqlx checksums them. Their

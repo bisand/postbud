@@ -118,17 +118,60 @@ pub async fn run_due_checks(pool: &PgPool, resolver: &TokioAsyncResolver) -> any
     Ok(checked)
 }
 
+/// Build the resolver the checks use.
+///
+/// PUBLIC resolvers by default, NOT the system's — found the hard way.
+/// A host's ISP resolver had cached NXDOMAIN for a name from before its
+/// records were published and kept serving that negative answer, so the
+/// checker reported "missing" for records that were live and correct
+/// everywhere else. The verdict must not depend on which resolver the
+/// relay happens to be configured with.
+///
+/// The question this feature answers is "what does the world see?", and
+/// the world's receivers query the authoritative servers through
+/// well-behaved resolvers. Cloudflare and Google are that, and they
+/// honour the zone's own negative TTLs instead of inventing longer ones.
+/// `DNS_RESOLVERS` overrides with a comma-separated list of IPs for
+/// installations that run their own; `DNS_RESOLVERS=system` restores the
+/// old behaviour deliberately.
+fn build_resolver() -> TokioAsyncResolver {
+    use hickory_resolver::config::{NameServerConfigGroup, ResolverConfig, ResolverOpts};
+
+    match std::env::var("DNS_RESOLVERS").ok().as_deref() {
+        Some("system") => match TokioAsyncResolver::tokio_from_system_conf() {
+            Ok(r) => return r,
+            Err(e) => eprintln!("postbud: DNS_RESOLVERS=system but no system config ({e})"),
+        },
+        Some(list) if !list.trim().is_empty() => {
+            let ips: Vec<std::net::IpAddr> = list
+                .split(',')
+                .filter_map(|s| s.trim().parse().ok())
+                .collect();
+            if !ips.is_empty() {
+                let group = NameServerConfigGroup::from_ips_clear(&ips, 53, true);
+                return TokioAsyncResolver::tokio(
+                    ResolverConfig::from_parts(None, Vec::new(), group),
+                    ResolverOpts::default(),
+                );
+            }
+            eprintln!("postbud: DNS_RESOLVERS held no usable IPs; using the public default");
+        }
+        _ => {}
+    }
+
+    // Cloudflare first, Google as the second name server: two operators,
+    // so one having a bad day does not stall verification.
+    let mut group = NameServerConfigGroup::cloudflare();
+    group.merge(NameServerConfigGroup::google());
+    TokioAsyncResolver::tokio(
+        ResolverConfig::from_parts(None, Vec::new(), group),
+        ResolverOpts::default(),
+    )
+}
+
 /// The background loop, spawned by the worker alongside delivery.
 pub async fn run(pool: PgPool) {
-    // The container's resolv.conf when it has one (Kubernetes always
-    // provides it); public resolvers otherwise. Never silently off.
-    let resolver = TokioAsyncResolver::tokio_from_system_conf().unwrap_or_else(|e| {
-        eprintln!("postbud: no system resolver config ({e}); using public resolvers");
-        TokioAsyncResolver::tokio(
-            hickory_resolver::config::ResolverConfig::google(),
-            hickory_resolver::config::ResolverOpts::default(),
-        )
-    });
+    let resolver = build_resolver();
     loop {
         if let Err(e) = run_due_checks(&pool, &resolver).await {
             eprintln!("postbud: domain check round failed: {e:#}");
