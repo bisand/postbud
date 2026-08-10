@@ -75,7 +75,52 @@ spread out because after an hour the cause needs a human.
 `retry_window_survives_an_overnight_outage` fails if that window is ever
 shortened below a day. It is the test the crate exists for.
 
-## 5. Suppression semantics
+## 5. Throughput, and where the queue actually is
+
+**Postgres is the queue.** Not a stage in front of one: the row in
+`message` is the only thing that decides what gets sent. That is forced
+rather than chosen — the accepting transaction must consult the
+suppression list, dedup on the idempotency key and record the delivery
+anyway, so any separate broker would be a second write of the same fact,
+with the classic failure of a commit whose publish then fails. A message
+queued but never announced is invisible mail.
+
+The pieces that make Postgres enough:
+
+- **Claiming is `for update skip locked`.** Any number of workers may run
+  at once; they take disjoint batches with no coordination. That is
+  work-stealing, deliberately not round-robin — a partition assigned up
+  front leaves one worker stuck behind a slow receiver while its
+  neighbours idle.
+- **`NOTIFY` inside the accepting transaction** wakes a worker in
+  milliseconds instead of at the next poll. It cannot arrive before the
+  row it refers to is visible, and cannot arrive at all if the
+  transaction rolls back. It is only a wake-up: losing it costs latency
+  and nothing else.
+- **The poll stays, and is load-bearing.** A retry becomes due at a time
+  in the future that nothing can announce when it arrives, so
+  `WORKER_IDLE_MS` remains the floor under everything.
+- **`WORKER_CONCURRENCY` deliveries in flight per worker.** A batch used
+  to be relayed strictly one message at a time, so claiming twenty bought
+  nothing; concurrency, not batch size, is what makes a burst drain.
+  Attachments for a whole batch load in one query for the same reason.
+  The SMTP connection pool is sized to the same number, or the queueing
+  simply moves one layer down where nothing can see it.
+
+Sizing is a chain, and every link has to clear the next: workers ×
+concurrency must stay under Postfix's per-client connection limit;
+`DATABASE_MAX_CONNECTIONS` must clear `WORKER_CONCURRENCY + 1` (the extra
+one is held permanently by the notification listener); and workers ×
+`DATABASE_MAX_CONNECTIONS`, plus the API's and the purge job's, must stay
+under Postgres's own `max_connections`.
+
+**The ceiling above all of it is the relay.** One Postfix, one IP, by
+design (section 9). Postfix owns per-destination concurrency and rate
+limiting; past a certain rate, pushing harder only moves mail into its
+queue, which is what its queue is for. Tuning postbud past that point
+optimises the wrong hop.
+
+## 6. Suppression semantics
 
 **Only a permanent failure suppresses.** The asymmetry is deliberate and
 runs through the whole codebase: a needless retry costs a connection, a
@@ -97,7 +142,7 @@ invoices. A hard delete answers nothing.
 decision about it; failing the call would tell the caller their code is
 wrong when it is the address that is dead.
 
-## 6. Where each piece runs
+## 7. Where each piece runs
 
 | | Runs on | Holds |
 | --- | --- | --- |
@@ -122,7 +167,7 @@ If the relay is down, postbud keeps accepting and queueing, and the
 `relayhost` escape hatch can point elsewhere while it is drained. If the
 cluster is down, the applications are down too, so there is nothing to send.
 
-## 7. Message bodies are personal data
+## 8. Message bodies are personal data
 
 Invoices carry names, addresses and amounts. The **delivery record** is
 operational history and is kept; the **content** has no reason to outlive
@@ -130,7 +175,7 @@ the delivery it existed for. `postbud purge` blanks bodies and attachments
 of finished messages after `BODY_RETENTION_DAYS` (default 30), leaving the
 delivery attempts, the queue id and the bounce reports intact.
 
-## 8. Deliberately not built
+## 9. Deliberately not built
 
 - **Inbound mail.** The relay accepts a short RCPT allowlist — bounces,
   `abuse@`, `postmaster@`, DMARC reports — and rejects everything else
@@ -140,7 +185,7 @@ delivery attempts, the queue id and the bounce reports intact.
   second is the better answer.
 - **An SMTP submission listener in postbud.** The API is the only way in;
   the relay accepts submission from nowhere but the delivery worker
-  (section 6). Writing a submission server here would only be worth it to
+  (section 7). Writing a submission server here would only be worth it to
   give SMTP callers the suppression list and the delivery record; if that
   day comes, it is a component, not a redesign.
 - **Templates, scheduled sending, open/click tracking.** The applications
@@ -150,7 +195,7 @@ delivery attempts, the queue id and the bounce reports intact.
   a second IP splits reputation at exactly the volume where it is already
   thin.
 
-## 9. The admin surface
+## 10. The admin surface
 
 `/admin` is a Svelte 5 + daisyUI app compiled into `ui/admin/dist`
 (checked in, embedded into the binary with `include_dir` — cargo never
@@ -219,7 +264,7 @@ Everything the admin can do is READ or STATE: the evidence tables
 read or superseded, never rewritten — lifting a suppression is a soft
 delete with `removed_by`, the same discipline as everywhere else.
 
-## 10. Domain verification
+## 11. Domain verification
 
 The Domains section holds the sending-domain registry: for each domain,
 the expected SPF record, the DKIM selector and public key the relay

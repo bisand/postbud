@@ -3,9 +3,20 @@
 use anyhow::Context;
 use chrono::{DateTime, Duration, Utc};
 use sqlx::{PgPool, Row};
+use std::collections::HashMap;
 use uuid::Uuid;
 
 use crate::suppression;
+
+/// The channel workers listen on so a newly accepted message is picked up
+/// in milliseconds instead of at the next poll.
+///
+/// This is a WAKE-UP, never the queue itself: the row in `message` is the
+/// only thing that decides what gets sent. A missed notification costs
+/// latency and nothing else, because the worker polls anyway — which is
+/// also why retries, whose due time nothing can notify about in advance,
+/// still work.
+pub const QUEUE_CHANNEL: &str = "postbud_queued";
 
 #[derive(Debug, Clone)]
 pub struct Attachment {
@@ -49,6 +60,9 @@ pub struct Accepted {
 ///    makes a caller's retry safe: resubmitting the same business event
 ///    cannot turn one invoice into two.
 /// 3. Attachments are stored with their digest.
+/// 4. Workers are notified — inside the transaction, so the wake-up
+///    cannot arrive before the row it refers to is visible, and cannot
+///    arrive at all if the transaction rolls back.
 pub async fn accept(pool: &PgPool, msg: &NewMessage) -> anyhow::Result<Accepted> {
     let mut tx = pool.begin().await.context("beginning accept transaction")?;
 
@@ -99,21 +113,33 @@ pub async fn accept(pool: &PgPool, msg: &NewMessage) -> anyhow::Result<Accepted>
 
     let id: Uuid = row.get("id");
 
-    for attachment in &msg.attachments {
+    for (position, attachment) in msg.attachments.iter().enumerate() {
         let digest = sha256(&attachment.content);
         sqlx::query(
             "insert into message_attachment
-                 (message_id, filename, content_type, content, sha256)
-             values ($1, $2, $3, $4, $5)",
+                 (message_id, filename, content_type, content, sha256, position)
+             values ($1, $2, $3, $4, $5, $6)",
         )
         .bind(id)
         .bind(&attachment.filename)
         .bind(&attachment.content_type)
         .bind(&attachment.content)
         .bind(digest.as_slice())
+        .bind(position as i32)
         .execute(&mut *tx)
         .await
         .context("storing attachment")?;
+    }
+
+    // Only for something a worker can actually do: a suppressed message is
+    // already finished, and the deduplicated path returned above without
+    // queueing anything. Waking workers for either would be a lie.
+    if !suppressed {
+        sqlx::query("select pg_notify($1, '')")
+            .bind(QUEUE_CHANNEL)
+            .execute(&mut *tx)
+            .await
+            .context("notifying workers")?;
     }
 
     tx.commit().await.context("committing accept")?;
@@ -171,6 +197,9 @@ pub async fn claim(pool: &PgPool, worker: &str, batch: i64) -> anyhow::Result<Ve
     .await
     .context("claiming messages")?;
 
+    let ids: Vec<Uuid> = rows.iter().map(|row| row.get("id")).collect();
+    let mut attachments = attachments_for(pool, &ids).await?;
+
     let mut claimed = Vec::with_capacity(rows.len());
     for row in rows {
         let id: Uuid = row.get("id");
@@ -184,30 +213,49 @@ pub async fn claim(pool: &PgPool, worker: &str, batch: i64) -> anyhow::Result<Ve
             subject: row.get("subject"),
             body_text: row.get("body_text"),
             body_html: row.get("body_html"),
-            attachments: attachments_for(pool, id).await?,
+            attachments: attachments.remove(&id).unwrap_or_default(),
         });
     }
     Ok(claimed)
 }
 
-async fn attachments_for(pool: &PgPool, message_id: Uuid) -> anyhow::Result<Vec<Attachment>> {
+/// Attachments for a whole claimed batch, in ONE query.
+///
+/// Per-message loading made claiming cost a round trip per message before
+/// a single byte was relayed — the batch existed but the fetching did not
+/// benefit from it. Grouping by message id here is why `Claimed` can still
+/// be built one row at a time.
+async fn attachments_for(
+    pool: &PgPool,
+    message_ids: &[Uuid],
+) -> anyhow::Result<HashMap<Uuid, Vec<Attachment>>> {
+    let mut by_message: HashMap<Uuid, Vec<Attachment>> = HashMap::new();
+    if message_ids.is_empty() {
+        return Ok(by_message);
+    }
+
     let rows = sqlx::query(
-        "select filename, content_type, content
-           from message_attachment where message_id = $1 order by id",
+        "select message_id, filename, content_type, content
+           from message_attachment
+          where message_id = any($1)
+          order by message_id, position, id",
     )
-    .bind(message_id)
+    .bind(message_ids)
     .fetch_all(pool)
     .await
     .context("loading attachments")?;
 
-    Ok(rows
-        .into_iter()
-        .map(|r| Attachment {
-            filename: r.get("filename"),
-            content_type: r.get("content_type"),
-            content: r.get("content"),
-        })
-        .collect())
+    for row in rows {
+        by_message
+            .entry(row.get("message_id"))
+            .or_default()
+            .push(Attachment {
+                filename: row.get("filename"),
+                content_type: row.get("content_type"),
+                content: row.get("content"),
+            });
+    }
+    Ok(by_message)
 }
 
 /// The relay took the message. `relay_queue_id` is Postfix's own queue id,

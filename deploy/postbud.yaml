@@ -82,7 +82,17 @@ metadata:
   name: postbud-worker
   namespace: postbud
 spec:
-  replicas: 1
+  # Safe at any number: claiming is `for update skip locked`, so replicas
+  # take disjoint batches without coordinating. Two, not more, and for
+  # AVAILABILITY rather than throughput -- a restart or a rolling update
+  # no longer stops delivery dead. Throughput comes from WORKER_CONCURRENCY
+  # below, which costs no extra pod; on a one-core box more replicas would
+  # buy nothing, and the ceiling above both is the single relay anyway.
+  #
+  # Every replica must land on the node running Postfix, since RELAY_HOST
+  # is that node's cni0 bridge. True by construction here (single-node
+  # k3s); a second node would need a nodeSelector before scaling.
+  replicas: 2
   selector:
     matchLabels:
       app: postbud-worker
@@ -108,6 +118,27 @@ spec:
               value: "none"
             - name: WORKER_BATCH
               value: "20"
+            # Deliveries in flight at once, per pod. The batch used to be
+            # relayed strictly one message at a time, so batching bought
+            # nothing. 2 pods x 8 = 16 concurrent SMTP connections, well
+            # under Postfix's default 50-per-client limit.
+            - name: WORKER_CONCURRENCY
+              value: "8"
+            # Must clear WORKER_CONCURRENCY + 1: the extra one is held for
+            # the whole process lifetime by the queue-notification
+            # listener. Under it, deliveries would queue at the last step,
+            # writing down what already happened.
+            #
+            # 12 and not more because the ceilings have to add up against
+            # postgres.yaml's max_connections=50: 2 workers x 12, plus the
+            # API's 8, plus the purge job's 8, plus the 3 Postgres reserves
+            # for superusers, is 43. Raising this means raising that.
+            - name: DATABASE_MAX_CONNECTIONS
+              value: "12"
+            # Now only the safety net. A newly accepted message arrives via
+            # a NOTIFY inside the accepting transaction; this interval is
+            # what catches retries, whose due time nothing can announce in
+            # advance.
             - name: WORKER_IDLE_MS
               value: "2000"
           envFrom:

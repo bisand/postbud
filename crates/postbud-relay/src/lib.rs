@@ -14,6 +14,7 @@ pub mod worker;
 
 use anyhow::{Context, anyhow};
 use lettre::message::{Attachment, MultiPart, SinglePart, header};
+use lettre::transport::smtp::PoolConfig;
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::transport::smtp::client::{Tls, TlsParameters};
 use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
@@ -72,7 +73,11 @@ impl Relay {
                 ));
             }
         }
-        .port(port);
+        .port(port)
+        // Sized to the worker's in-flight limit: a pool smaller than the
+        // concurrency would only move the queueing one layer down, into
+        // the transport, where nothing can see it.
+        .pool_config(PoolConfig::new().max_size(crate::worker::concurrency_from_env()? as u32));
 
         if let (Ok(user), Ok(password)) = (
             std::env::var("RELAY_USERNAME"),
