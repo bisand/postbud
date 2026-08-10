@@ -113,6 +113,30 @@ export function beginLogin(cfg) {
   location.assign(url);
 }
 
+/// End the session at the ISSUER, not just here.
+///
+/// Forgetting our own token only makes this browser stop presenting it;
+/// the issuer's own session survives, so signing in again hands the next
+/// person straight back in without a password. That is the whole point
+/// of a sign-out button on a shared machine.
+///
+/// The id_token is sent as `id_token_hint` so the issuer can end the
+/// session without a confirmation round-trip. No
+/// `post_logout_redirect_uri`: it must be pre-registered on the client,
+/// and an unregistered one is a hard error at a spec-compliant issuer —
+/// landing on the issuer's own "signed out" page is a smaller price than
+/// a sign-out that 400s.
+///
+/// Returns false when the issuer advertises no end-session endpoint, so
+/// the caller can still clear local state and say what happened.
+export function endIssuerSession(cfg, idToken) {
+  if (!cfg?.end_session_endpoint) return false;
+  const url = new URL(cfg.end_session_endpoint);
+  if (idToken) url.searchParams.set("id_token_hint", idToken);
+  location.assign(url);
+  return true;
+}
+
 /// Handle a ?code= callback if one is present. Returns the id_token, or
 /// null when this page load is not an OIDC callback.
 export async function completeLogin() {

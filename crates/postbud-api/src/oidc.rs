@@ -54,6 +54,10 @@ struct Discovery {
     authorization_endpoint: String,
     token_endpoint: String,
     jwks_uri: String,
+    /// RP-initiated logout. Optional: an issuer without one simply gets
+    /// no end-session step, and signing out stays local.
+    #[serde(default)]
+    end_session_endpoint: Option<String>,
 }
 
 /// The identity a verified id_token asserts.
@@ -245,6 +249,9 @@ pub async fn config(State(state): State<AppState>) -> ApiResult<Json<serde_json:
                 "issuer": oidc.issuer,
                 "client_id": oidc.client_id,
                 "authorization_endpoint": discovery.authorization_endpoint,
+                // Without this the UI can only forget its own token, and
+                // the issuer's session outlives the sign-out entirely.
+                "end_session_endpoint": discovery.end_session_endpoint,
             })
         }
     };

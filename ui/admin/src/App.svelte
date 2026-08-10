@@ -1,6 +1,6 @@
 <script>
   import { auth, api, me } from "./lib/api.svelte.js";
-  import { fetchConfig, beginLogin, completeLogin } from "./lib/oidc.js";
+  import { fetchConfig, beginLogin, completeLogin, endIssuerSession } from "./lib/oidc.js";
   import { icons } from "./lib/icons.js";
   import { THEMES, themePref, apply as applyTheme } from "./lib/theme.svelte.js";
   import Dashboard from "./lib/Dashboard.svelte";
@@ -57,6 +57,21 @@
   let loginError = $state("");
   let checking = $state(false);
   let config = $state(null);
+
+  /// Sign out of the ISSUER too, not only of this tab.
+  ///
+  /// Clearing the local token used to be the whole of it, so the next
+  /// sign-in was silent — no password, straight back in. The local token
+  /// is cleared first either way: if the issuer has no end-session
+  /// endpoint, or the credential was the static admin token rather than
+  /// an OIDC one, signing out must still work.
+  function signOut() {
+    const idToken = auth.token;
+    auth.clear();
+    if (!endIssuerSession(oidcCfg, idToken)) {
+      location.assign("/admin");
+    }
+  }
   let showTokenForm = $state(false);
   const oidcCfg = $derived(config?.oidc ?? null);
 
@@ -216,7 +231,7 @@
         class="btn btn-ghost btn-sm btn-square shrink-0"
         title="Sign out"
         aria-label="Sign out"
-        onclick={() => auth.clear()}
+        onclick={signOut}
       >
         {@html icons.signout}
       </button>
@@ -258,7 +273,7 @@
         <button
           class="btn btn-ghost btn-sm justify-start gap-3"
           title="Sign out"
-          onclick={() => auth.clear()}
+          onclick={signOut}
         >
           {@html icons.signout}
           <span>Sign out</span>
