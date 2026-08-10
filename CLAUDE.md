@@ -62,6 +62,14 @@ reputation checklist in [docs/dns.md](docs/dns.md).
   include_dir (cargo never needs node); rebuild with
   `scripts/build-ui.sh`, CI fails when dist drifts from source. Key
   rotation kills the old key atomically.
+- **Domain verification** (docs/architecture.md §10): sending domains
+  are a registry (expected SPF, DKIM selector + public key, MX); the
+  worker checks real DNS every 15 min until green, then daily. Rules are
+  pure in `postbud-core::dnscheck` and encode the two real incidents:
+  duplicate SPF = PermError even if one matches, and DKIM compared to
+  the signing key byte-for-byte. Resolver failure skips, never records.
+  Checks are insert-only history. `DNS_SPF_DEFAULT` prefills new
+  domains.
 - **Applied migrations are never edited** — sqlx checksums them. Their
   comments are part of the record, even where newer policy (like this
   file's genericity rule) would phrase them differently today.

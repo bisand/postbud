@@ -51,6 +51,7 @@ fn app(users: &[&str], admin_token: Option<&str>) -> axum::Router {
         bounce_token: None,
         admin_token: admin_token.map(String::from),
         admin_oidc: Some(oidc),
+        spf_default: None,
     })
 }
 

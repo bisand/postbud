@@ -8,6 +8,7 @@
   import Suppressions from "./lib/Suppressions.svelte";
   import Tenants from "./lib/Tenants.svelte";
   import Bounces from "./lib/Bounces.svelte";
+  import Domains from "./lib/Domains.svelte";
   import Users from "./lib/Users.svelte";
 
   const sections = [
@@ -16,6 +17,7 @@
     { id: "suppressions", label: "Suppressions", component: Suppressions },
     { id: "tenants", label: "Tenants", component: Tenants },
     { id: "bounces", label: "Bounces", component: Bounces },
+    { id: "domains", label: "Domains", component: Domains },
     { id: "users", label: "Users", component: Users },
   ];
 

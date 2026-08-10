@@ -36,6 +36,10 @@ pub struct AppState {
     /// OIDC login for the admin surface (issuer-configurable relying
     /// party + allowlist). See [`oidc::OidcAdmin`].
     pub admin_oidc: Option<std::sync::Arc<oidc::OidcAdmin>>,
+    /// Default SPF value for newly registered sending domains
+    /// (`DNS_SPF_DEFAULT`, e.g. `v=spf1 ip4:203.0.113.5 -all`). Unset =
+    /// every domain registration must state its SPF explicitly.
+    pub spf_default: Option<String>,
 }
 
 /// The version this binary identifies as. Baked in at image build from

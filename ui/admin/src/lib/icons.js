@@ -47,6 +47,12 @@ export const icons = {
   bounces: svg(
     '<path d="M4 7h11a5 5 0 0 1 0 10H9"/>' + '<path d="M12 13.5L8.5 17l3.5 3.5"/>',
   ),
+  // Globe: sending domains.
+  domains: svg(
+    '<circle cx="12" cy="12" r="8.5"/>' +
+      '<ellipse cx="12" cy="12" rx="3.8" ry="8.5"/>' +
+      '<path d="M4 9.5h16M4 14.5h16"/>',
+  ),
   // Person with a key: user administration.
   users: svg(
     '<circle cx="10" cy="8" r="3.2"/>' +

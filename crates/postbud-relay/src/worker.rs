@@ -43,6 +43,12 @@ impl Config {
 /// Run until cancelled. Several instances may run at once: claiming uses
 /// `for update skip locked`, so they take disjoint batches.
 pub async fn run(pool: PgPool, relay: Relay, config: Config) -> anyhow::Result<()> {
+    // Domain verification rides in the worker process: it is the
+    // long-lived non-API process, and a DNS check is the same kind of
+    // background duty as delivery. With several workers the checks
+    // duplicate harmlessly (insert-only history, identical answers).
+    tokio::spawn(crate::dnscheck::run(pool.clone()));
+
     loop {
         let claimed = message::claim(&pool, &config.worker_name, config.batch).await?;
         if claimed.is_empty() {

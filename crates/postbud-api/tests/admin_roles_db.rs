@@ -88,6 +88,7 @@ async fn a_viewer_reads_everything_and_changes_nothing() {
         bounce_token: None,
         admin_token: Some("bootstrap-token".into()),
         admin_oidc: Some(oidc),
+        spf_default: None,
     });
 
     // Unique identities per run: the shared dev database must not make

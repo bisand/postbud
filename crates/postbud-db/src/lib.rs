@@ -12,6 +12,7 @@
 pub mod admin;
 pub mod admin_user;
 pub mod bounce;
+pub mod domain;
 pub mod message;
 pub mod suppression;
 pub mod tenant;

@@ -7,6 +7,7 @@
 pub mod address;
 pub mod apikey;
 pub mod authz;
+pub mod dnscheck;
 pub mod dsn;
 pub mod retry;
 

@@ -218,3 +218,25 @@ Everything the admin can do is READ or STATE: the evidence tables
 (delivery attempts, bounce reports, suppression history) are only ever
 read or superseded, never rewritten — lifting a suppression is a soft
 delete with `removed_by`, the same discipline as everywhere else.
+
+## 10. Domain verification
+
+The Domains section holds the sending-domain registry: for each domain,
+the expected SPF record, the DKIM selector and public key the relay
+signs with, and the MX that routes bounces home. The UI renders these as
+paste-ready DNS rows; the worker then checks reality against them —
+every 15 minutes while anything is wrong (an operator mid-setup should
+get feedback in minutes), daily once everything is green, because DNS
+does not only start wrong, it also breaks later. Checks are insert-only
+history: "when did it break, and for how long" is answerable.
+
+The rules are pure (`postbud-core::dnscheck`) and encode two failures
+that actually happened rather than hypotheticals: a SECOND SPF record on
+the same name is reported as a PermError even when one of the two is
+exactly right (RFC 7208 — receivers treat the domain as having no SPF at
+all), and a published DKIM record is compared to the signing key
+byte-for-byte, because a record with the wrong key looks fine to the eye
+and fails at every receiver. DMARC follows the inheritance walk toward
+the organizational domain, and a resolver failure SKIPS the check rather
+than recording it — an outage at our resolver must not be written down
+as every domain suddenly losing its DNS.

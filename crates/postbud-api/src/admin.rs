@@ -58,6 +58,8 @@ pub fn router() -> Router<AppState> {
         .route("/admin/api/bounces", get(bounces))
         .route("/admin/api/bounces/{id}/raw", get(bounce_raw))
         .route("/admin/api/me", get(me))
+        .route("/admin/api/domains", get(domains).post(domain_add))
+        .route("/admin/api/domains/{id}", axum::routing::delete(domain_end))
         .route("/admin/api/users", get(users).post(user_add))
         .route("/admin/api/users/{id}/role", post(user_role))
         .route("/admin/api/users/{id}", axum::routing::delete(user_end))
@@ -436,6 +438,146 @@ async fn tenant_domains(
 ) -> ApiResult<StatusCode> {
     let domains = clean_domains(&req.from_domains)?;
     if tenant::set_domains(&state.pool, id, &domains).await? {
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(ApiError::NotFound)
+    }
+}
+
+// ---------------------------------------------------------------- domains
+
+/// One sending domain with its latest verification snapshot. The
+/// `records` array is what the UI renders as paste-ready DNS rows.
+#[derive(Debug, serde::Serialize)]
+struct DomainView {
+    #[serde(flatten)]
+    domain: postbud_db::domain::SendingDomain,
+    records: Vec<serde_json::Value>,
+    check: Option<postbud_db::domain::CheckRow>,
+}
+
+fn record_rows(d: &postbud_db::domain::SendingDomain) -> Vec<serde_json::Value> {
+    let mut rows = vec![
+        serde_json::json!({
+            "kind": "spf", "type": "TXT", "name": d.domain,
+            "value": d.spf_expected,
+        }),
+        serde_json::json!({
+            "kind": "dkim", "type": "TXT",
+            "name": format!("{}._domainkey.{}", d.dkim_selector, d.domain),
+            "value": format!("v=DKIM1; h=sha256; k=rsa; p={}", d.dkim_public_key),
+        }),
+        serde_json::json!({
+            "kind": "dmarc", "type": "TXT",
+            "name": format!("_dmarc.{}", d.domain),
+            "value": "v=DMARC1; p=none",
+            "note": "or inherited from the parent domain's policy",
+        }),
+    ];
+    if let Some(mx) = &d.mx_expected {
+        rows.push(serde_json::json!({
+            "kind": "mx", "type": "MX", "name": d.domain,
+            "value": format!("10 {mx}"),
+        }));
+    }
+    rows
+}
+
+async fn domains(State(state): State<AppState>, _admin: Admin) -> ApiResult<Json<Vec<DomainView>>> {
+    let list = postbud_db::domain::list(&state.pool).await?;
+    let mut checks = postbud_db::domain::latest_checks(&state.pool).await?;
+    Ok(Json(
+        list.into_iter()
+            .map(|d| DomainView {
+                records: record_rows(&d),
+                check: checks.remove(&d.id),
+                domain: d,
+            })
+            .collect(),
+    ))
+}
+
+#[derive(Debug, Deserialize)]
+struct DomainAdd {
+    domain: String,
+    /// Defaults to authorizing exactly this installation's relay — the
+    /// caller may override for include:-style setups.
+    spf_expected: Option<String>,
+    dkim_selector: String,
+    /// The p= value the relay signs with. Pasting the WRONG key here
+    /// would make the checker bless a broken setup, which is why the
+    /// worker compares byte-for-byte against what DNS serves — garbage
+    /// in still turns red the moment the relay's signature fails... but
+    /// the check itself can only be as honest as this value.
+    dkim_public_key: String,
+    mx_expected: Option<String>,
+}
+
+async fn domain_add(
+    State(state): State<AppState>,
+    AdminWrite(admin): AdminWrite,
+    Json(req): Json<DomainAdd>,
+) -> ApiResult<Json<DomainView>> {
+    let domain = req.domain.trim().trim_end_matches('.').to_ascii_lowercase();
+    if domain.is_empty() || !domain.contains('.') || domain.contains(['@', ' ', '/']) {
+        return Err(ApiError::BadRequest(format!(
+            "'{domain}' does not look like a domain"
+        )));
+    }
+    let selector = req.dkim_selector.trim();
+    if selector.is_empty() {
+        return Err(ApiError::BadRequest("dkim_selector is required".into()));
+    }
+    let key: String = req
+        .dkim_public_key
+        .chars()
+        .filter(|c| !c.is_whitespace() && *c != '"')
+        .collect();
+    if key.len() < 64 {
+        return Err(ApiError::BadRequest(
+            "dkim_public_key looks too short to be a key — paste the p= value".into(),
+        ));
+    }
+    let spf = match req.spf_expected.as_deref().map(str::trim) {
+        Some(s) if !s.is_empty() => s.to_string(),
+        _ => match &state.spf_default {
+            Some(default) => default.clone(),
+            None => {
+                return Err(ApiError::BadRequest(
+                    "spf_expected is required (DNS_SPF_DEFAULT is not configured)".into(),
+                ));
+            }
+        },
+    };
+
+    let created = postbud_db::domain::add(
+        &state.pool,
+        &domain,
+        &spf,
+        selector,
+        &key,
+        req.mx_expected
+            .as_deref()
+            .map(str::trim)
+            .filter(|m| !m.is_empty()),
+        &admin.actor,
+    )
+    .await
+    .map_err(|e| ApiError::BadRequest(e.to_string()))?;
+
+    Ok(Json(DomainView {
+        records: record_rows(&created),
+        check: None,
+        domain: created,
+    }))
+}
+
+async fn domain_end(
+    State(state): State<AppState>,
+    AdminWrite(admin): AdminWrite,
+    Path(id): Path<i64>,
+) -> ApiResult<StatusCode> {
+    if postbud_db::domain::end(&state.pool, id, &admin.actor).await? {
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err(ApiError::NotFound)

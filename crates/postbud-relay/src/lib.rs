@@ -9,6 +9,7 @@
 //! this repository: signing happens in OpenDKIM on the relay host, so the
 //! key exists in exactly one place.
 
+pub mod dnscheck;
 pub mod worker;
 
 use anyhow::{Context, anyhow};
