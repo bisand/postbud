@@ -252,6 +252,10 @@ pub struct MessageDetail {
     /// The text body, when it still exists. Bodies are purged after
     /// BODY_RETENTION_DAYS; `body_purged_at` says when that happened.
     pub body_text: Option<String>,
+    /// The HTML alternative, when the message had one. Returned in full
+    /// so the admin can see what the recipient saw — the UI renders it
+    /// in a sandboxed frame, never into its own document.
+    pub body_html: Option<String>,
     pub has_html: bool,
     pub body_purged_at: Option<DateTime<Utc>>,
     pub attachments: Vec<AttachmentMeta>,
@@ -271,7 +275,7 @@ pub async fn message_detail(pool: &PgPool, id: Uuid) -> anyhow::Result<Option<Me
     let Some(r) = sqlx::query(
         "select m.id, t.name as tenant, m.idempotency_key, m.mail_from,
                 m.from_name, m.rcpt_to, m.reply_to, m.subject, m.body_text,
-                m.body_html is not null as has_html, m.status, m.attempts,
+                m.body_html, m.body_html is not null as has_html, m.status, m.attempts,
                 m.relay_queue_id, m.last_error, m.created_at, m.completed_at,
                 m.body_purged_at
            from message m join tenant t on t.id = m.tenant_id
@@ -353,6 +357,7 @@ pub async fn message_detail(pool: &PgPool, id: Uuid) -> anyhow::Result<Option<Me
         from_name: r.get("from_name"),
         reply_to: r.get("reply_to"),
         body_text: r.get("body_text"),
+        body_html: r.get("body_html"),
         has_html: r.get("has_html"),
         body_purged_at: r.get("body_purged_at"),
         attachments,

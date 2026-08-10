@@ -1,5 +1,7 @@
 <script>
   import { api, fmtTime } from "./api.svelte.js";
+  import Pager from "./Pager.svelte";
+  import { pageSize } from "./pagesize.svelte.js";
 
   let rows = $state(null);
   let tenants = $state([]);
@@ -13,6 +15,7 @@
   let stack = $state([null]);
   let pos = $state(0);
   let next = $state(null);
+  let limit = $state(null);
 
   // Block form.
   let address = $state("");
@@ -31,9 +34,11 @@
       if (includeRemoved) params.set("include_removed", "true");
       const cursor = stack[pos];
       if (cursor) params.set("before_id", cursor.before_id);
+      params.set("limit", pageSize.value);
       const page = await api(`/suppressions?${params}`);
       rows = page.items;
       next = page.next;
+      limit = page.limit;
     } catch (e) {
       error = e.message;
     }
@@ -55,6 +60,15 @@
   function newer() {
     if (pos === 0) return;
     pos -= 1;
+    load();
+  }
+
+  /// A different page size makes every existing cursor meaningless —
+  /// they were positions in a differently-sized sequence — so paging
+  /// starts over rather than landing somewhere arbitrary.
+  function resize() {
+    stack = [null];
+    pos = 0;
     load();
   }
 
@@ -199,11 +213,15 @@
             </tbody>
           </table>
         </div>
-        <div class="flex items-center gap-2">
-          <button class="btn btn-sm" disabled={pos === 0} onclick={newer}>← Newer</button>
-          <button class="btn btn-sm" disabled={!next} onclick={older}>Older →</button>
-          {#if pos > 0}<span class="text-xs opacity-60">page {pos + 1}</span>{/if}
-        </div>
+        <Pager
+          {pos}
+          hasNext={!!next}
+          {limit}
+          count={rows.length}
+          onNewer={newer}
+          onOlder={older}
+          onResize={resize}
+        />
       {/if}
     </div>
   </div>

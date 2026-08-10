@@ -199,16 +199,35 @@ async fn overview(
 struct Page<T, C> {
     items: Vec<T>,
     next: Option<C>,
+    /// The page size actually applied, after defaulting and clamping.
+    /// Returned rather than assumed: a UI that only shows "newer" and
+    /// "older" leaves the operator guessing how much they are looking
+    /// at, and a silently clamped request would make that guess wrong.
+    limit: i64,
 }
 
-fn paginate<T, C>(mut items: Vec<T>, limit: usize, cursor: impl Fn(&T) -> C) -> Page<T, C> {
-    let next = if items.len() > limit {
-        items.truncate(limit);
+/// Rows per page when the caller does not say.
+const DEFAULT_PAGE_SIZE: i64 = 10;
+/// The most any caller may ask for. The ceiling is the point: without
+/// one, `?limit=100000` turns keyset paging back into the full scan it
+/// exists to avoid.
+const MAX_PAGE_SIZE: i64 = 100;
+
+fn page_size(requested: Option<i64>) -> i64 {
+    requested
+        .unwrap_or(DEFAULT_PAGE_SIZE)
+        .clamp(1, MAX_PAGE_SIZE)
+}
+
+fn paginate<T, C>(mut items: Vec<T>, limit: i64, cursor: impl Fn(&T) -> C) -> Page<T, C> {
+    let keep = limit as usize;
+    let next = if items.len() > keep {
+        items.truncate(keep);
         items.last().map(&cursor)
     } else {
         None
     };
-    Page { items, next }
+    Page { items, next, limit }
 }
 
 #[derive(Debug, Deserialize)]
@@ -232,7 +251,7 @@ async fn messages(
     _admin: Admin,
     Query(q): Query<MessagesQuery>,
 ) -> ApiResult<Json<Page<admin::MessageRow, MessageCursor>>> {
-    let limit = q.limit.unwrap_or(50).clamp(1, 200);
+    let limit = page_size(q.limit);
     let filter = admin::MessageFilter {
         tenant: q.tenant.as_deref().filter(|t| !t.is_empty()),
         status: q.status.as_deref().filter(|s| !s.is_empty()),
@@ -241,7 +260,7 @@ async fn messages(
         limit: limit + 1,
     };
     let rows = admin::messages(&state.pool, &filter).await?;
-    Ok(Json(paginate(rows, limit as usize, |m| MessageCursor {
+    Ok(Json(paginate(rows, limit, |m| MessageCursor {
         before: m.created_at,
         before_id: m.id,
     })))
@@ -277,7 +296,7 @@ async fn suppressions(
     _admin: Admin,
     Query(q): Query<SuppressionsQuery>,
 ) -> ApiResult<Json<Page<admin::SuppressionRow, IdCursor>>> {
-    let limit = q.limit.unwrap_or(50).clamp(1, 200);
+    let limit = page_size(q.limit);
     let address = q.address.as_deref().filter(|a| !a.is_empty());
     let rows = admin::suppressions(
         &state.pool,
@@ -287,7 +306,7 @@ async fn suppressions(
         limit + 1,
     )
     .await?;
-    Ok(Json(paginate(rows, limit as usize, |s| IdCursor {
+    Ok(Json(paginate(rows, limit, |s| IdCursor {
         before_id: s.id,
     })))
 }
@@ -727,9 +746,9 @@ async fn bounces(
     _admin: Admin,
     Query(q): Query<BouncesQuery>,
 ) -> ApiResult<Json<Page<admin::BounceRow, IdCursor>>> {
-    let limit = q.limit.unwrap_or(50).clamp(1, 200);
+    let limit = page_size(q.limit);
     let rows = admin::bounces(&state.pool, q.before_id, limit + 1).await?;
-    Ok(Json(paginate(rows, limit as usize, |b| IdCursor {
+    Ok(Json(paginate(rows, limit, |b| IdCursor {
         before_id: b.id,
     })))
 }
@@ -794,4 +813,38 @@ async fn ui_asset(Path(path): Path<String>) -> Response {
         file.contents(),
     )
         .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The ceiling is load-bearing: without it `?limit=100000` turns
+    /// keyset paging back into the full scan it exists to avoid. The
+    /// floor matters too — `?limit=0` would fetch one row and report a
+    /// next page forever.
+    #[test]
+    fn page_size_defaults_and_is_clamped_at_both_ends() {
+        assert_eq!(page_size(None), DEFAULT_PAGE_SIZE);
+        assert_eq!(page_size(Some(25)), 25);
+        assert_eq!(page_size(Some(MAX_PAGE_SIZE)), MAX_PAGE_SIZE);
+        assert_eq!(page_size(Some(100_000)), MAX_PAGE_SIZE);
+        assert_eq!(page_size(Some(0)), 1);
+        assert_eq!(page_size(Some(-5)), 1);
+    }
+
+    /// The extra row is how a next page is detected without COUNT(*);
+    /// it must never be shown, and the applied limit must come back so
+    /// the UI can state the page size rather than imply it.
+    #[test]
+    fn the_probe_row_is_dropped_and_becomes_the_cursor() {
+        let full = paginate(vec![1, 2, 3, 4], 3, |n: &i32| *n);
+        assert_eq!(full.items, vec![1, 2, 3]);
+        assert_eq!(full.next, Some(3), "the cursor is the LAST kept row");
+        assert_eq!(full.limit, 3);
+
+        let last = paginate(vec![1, 2], 3, |n: &i32| *n);
+        assert_eq!(last.items, vec![1, 2]);
+        assert_eq!(last.next, None, "a short page is the end");
+    }
 }

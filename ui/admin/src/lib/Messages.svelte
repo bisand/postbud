@@ -1,5 +1,7 @@
 <script>
   import { api, fmtTime } from "./api.svelte.js";
+  import Pager from "./Pager.svelte";
+  import { pageSize } from "./pagesize.svelte.js";
 
   // `param` is the optional message id from the route (#messages/{id}).
   // The detail view lives in the URL so the browser's Back button returns
@@ -21,6 +23,34 @@
   let stack = $state([null]);
   let pos = $state(0);
   let next = $state(null);
+  let limit = $state(null);
+
+  // Which part of a multipart message to show. Defaults to text — it is
+  // what the delivery record is really about — and only matters when
+  // both parts exist.
+  let bodyView = $state("text");
+
+  function showHtml(detail) {
+    if (!detail.body_html) return false;
+    return bodyView === "html" || !detail.body_text;
+  }
+
+  /// Wrap the body in a document that forbids everything remote.
+  ///
+  /// The sandbox attribute already stops script and origin access; this
+  /// stops the quieter problem — a tracking pixel or remote stylesheet
+  /// turning "an admin opened this message" into a signal for whoever
+  /// sent it. postbud refuses to add tracking pixels to outgoing mail;
+  /// it should not fire other people's either.
+  function sandboxed(html) {
+    return (
+      '<!doctype html><meta charset="utf-8">' +
+      '<meta http-equiv="Content-Security-Policy" ' +
+      "content=\"default-src 'none'; style-src 'unsafe-inline'; img-src data:;\">" +
+      '<style>body{font:13px system-ui,sans-serif;margin:8px}</style>' +
+      (html ?? "")
+    );
+  }
 
   const badge = {
     sent: "badge-success",
@@ -42,9 +72,11 @@
         params.set("before", cursor.before);
         params.set("before_id", cursor.before_id);
       }
+      params.set("limit", pageSize.value);
       const page = await api(`/messages?${params}`);
       rows = page.items;
       next = page.next;
+      limit = page.limit;
     } catch (e) {
       error = e.message;
     }
@@ -67,6 +99,15 @@
   function newer() {
     if (pos === 0) return;
     pos -= 1;
+    load();
+  }
+
+  /// A different page size makes every existing cursor meaningless —
+  /// they were positions in a differently-sized sequence — so paging
+  /// starts over rather than landing somewhere arbitrary.
+  function resize() {
+    stack = [null];
+    pos = 0;
     load();
   }
 
@@ -159,17 +200,43 @@
           </div>
         {/if}
 
-        <h3 class="font-semibold text-sm mt-2">Content</h3>
+        <div class="flex items-center gap-2 mt-2 flex-wrap">
+          <h3 class="font-semibold text-sm">Content</h3>
+          {#if detail.body_text && detail.body_html}
+            <div class="join">
+              <button
+                class="btn btn-xs join-item {bodyView === 'text' ? 'btn-active' : ''}"
+                onclick={() => (bodyView = "text")}>Text</button>
+              <button
+                class="btn btn-xs join-item {bodyView === 'html' ? 'btn-active' : ''}"
+                onclick={() => (bodyView = "html")}>HTML</button>
+            </div>
+          {/if}
+        </div>
         {#if detail.body_purged_at}
           <p class="text-sm opacity-70">
             Body purged {fmtTime(detail.body_purged_at)} (retention policy —
             the delivery record above is kept).
           </p>
+        {:else if showHtml(detail)}
+          <!-- The message body is UNTRUSTED: a tenant composed it, and it
+               is being viewed by an admin whose session can mint tenant
+               keys. It renders in a sandbox with neither allow-scripts
+               nor allow-same-origin, so script cannot run and nothing can
+               reach this origin, plus a CSP that blocks remote loads —
+               otherwise merely opening a message would report the view
+               back to whoever sent it. -->
+          <iframe
+            class="w-full h-64 bg-base-100 border border-base-300 rounded"
+            title="HTML body"
+            sandbox=""
+            srcdoc={sandboxed(detail.body_html)}
+          ></iframe>
+          <p class="text-xs opacity-60">
+            Rendered in a sandbox: no scripts, no remote images, no access to this page.
+          </p>
         {:else if detail.body_text}
           <pre class="bg-base-200 rounded p-3 text-xs whitespace-pre-wrap max-h-64 overflow-y-auto">{detail.body_text}</pre>
-          {#if detail.has_html}<p class="text-xs opacity-60">An HTML alternative exists; the text part is shown.</p>{/if}
-        {:else if detail.has_html}
-          <p class="text-sm opacity-70">HTML-only message (no text part).</p>
         {:else}
           <p class="text-sm opacity-70">No body stored.</p>
         {/if}
@@ -256,11 +323,15 @@
             </tbody>
           </table>
         </div>
-        <div class="flex items-center gap-2">
-          <button class="btn btn-sm" disabled={pos === 0} onclick={newer}>← Newer</button>
-          <button class="btn btn-sm" disabled={!next} onclick={older}>Older →</button>
-          {#if pos > 0}<span class="text-xs opacity-60">page {pos + 1}</span>{/if}
-        </div>
+        <Pager
+          {pos}
+          hasNext={!!next}
+          {limit}
+          count={rows.length}
+          onNewer={newer}
+          onOlder={older}
+          onResize={resize}
+        />
       {/if}
     </div>
   </div>
