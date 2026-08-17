@@ -31,6 +31,11 @@ pub struct Observed {
     pub dmarc_found_at: Option<String>,
     /// MX exchange hosts at the domain.
     pub mx: Vec<String>,
+    /// TXT records at each `<domain>._report._dmarc.<rua-host>` name that
+    /// [`report_auth_names`] asked for, in the same order. Empty when the
+    /// DMARC record names no external report destination — there is then
+    /// nothing to authorize.
+    pub report_auth: Vec<(String, Vec<String>)>,
 }
 
 /// What DNS is supposed to say, from the sending-domain registry.
@@ -74,6 +79,13 @@ pub struct DomainResult {
     pub dmarc: RecordResult,
     /// None when no MX is expected.
     pub mx: Option<RecordResult>,
+    /// None when the DMARC record names no external report destination.
+    ///
+    /// Deliberately NOT part of `valid`: where aggregate reports are sent
+    /// has no bearing on whether mail authenticates, and `valid` drives
+    /// the recheck cadence. A domain must not be pushed into 15-minute
+    /// rechecks forever over a reporting address.
+    pub report_auth: Option<RecordResult>,
     pub valid: bool,
 }
 
@@ -211,11 +223,116 @@ fn check_mx(observed: &[String], expected: &str) -> RecordResult {
     }
 }
 
+/// The registrable domain, approximated as the last two labels — the same
+/// approximation [`dmarc_names`] makes, and wrong in the same way for
+/// multi-label suffixes like co.uk.
+pub fn organizational_domain(domain: &str) -> String {
+    let labels: Vec<&str> = domain.trim_end_matches('.').split('.').collect();
+    if labels.len() <= 2 {
+        labels.join(".").to_ascii_lowercase()
+    } else {
+        labels[labels.len() - 2..].join(".").to_ascii_lowercase()
+    }
+}
+
+/// The mail domains named by a DMARC record's `rua=` tag.
+///
+/// `rua=mailto:a@x.example,mailto:b@y.example!10m` yields `x.example` and
+/// `y.example`; the `!size` suffix RFC 7489 §6.2 allows is not part of
+/// the address.
+pub fn rua_domains(record: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for tag in record.split(';') {
+        let Some((key, value)) = tag.split_once('=') else {
+            continue;
+        };
+        if !key.trim().eq_ignore_ascii_case("rua") {
+            continue;
+        }
+        for uri in value.split(',') {
+            let uri = uri.trim();
+            if uri.len() < 7 || !uri[..7].eq_ignore_ascii_case("mailto:") {
+                continue;
+            }
+            let addr = &uri[7..];
+            let addr = addr.split('!').next().unwrap_or(addr);
+            if let Some((_, host)) = addr.rsplit_once('@') {
+                let host = host.trim().trim_end_matches('.').to_ascii_lowercase();
+                if !host.is_empty() && !out.contains(&host) {
+                    out.push(host);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The `_report._dmarc` names that must exist for a DMARC record's
+/// EXTERNAL report destinations (RFC 7489 §7.1).
+///
+/// Reports to an address in the record's own organizational domain are a
+/// domain consenting to itself and need nothing published. Reports to
+/// anywhere else need that host to say so, otherwise receivers silently
+/// send nothing — no error, no bounce, just an empty inbox that looks
+/// exactly like "no mail was sent".
+///
+/// `publishing_domain` is the domain the record was actually FOUND at,
+/// not the domain being checked: an inherited policy is authorized by the
+/// parent that published it.
+pub fn report_auth_names(publishing_domain: &str, record: &str) -> Vec<String> {
+    let org = organizational_domain(publishing_domain);
+    rua_domains(record)
+        .into_iter()
+        .filter(|host| organizational_domain(host) != org)
+        .map(|host| format!("{publishing_domain}._report._dmarc.{host}"))
+        .collect()
+}
+
+/// Every authorization name must answer with a DMARC-version record.
+fn check_report_auth(observed: &[(String, Vec<String>)]) -> Option<RecordResult> {
+    if observed.is_empty() {
+        return None;
+    }
+    let missing: Vec<&str> = observed
+        .iter()
+        .filter(|(_, txt)| {
+            !txt.iter().any(|t| {
+                t.trim_start()
+                    .get(..8)
+                    .is_some_and(|p| p.eq_ignore_ascii_case("v=DMARC1"))
+            })
+        })
+        .map(|(name, _)| name.as_str())
+        .collect();
+
+    Some(if missing.is_empty() {
+        RecordResult {
+            status: Status::Ok,
+            observed: Some(
+                observed
+                    .iter()
+                    .map(|(name, _)| name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            ),
+        }
+    } else {
+        RecordResult {
+            status: Status::Missing,
+            observed: Some(format!(
+                "reports will NOT be sent: {} is missing",
+                missing.join(", ")
+            )),
+        }
+    })
+}
+
 pub fn evaluate(expected: &Expected, observed: &Observed) -> DomainResult {
     let spf = check_spf(&observed.domain_txt, &expected.spf);
     let dkim = check_dkim(&observed.dkim_txt, &expected.dkim_public_key);
     let dmarc = check_dmarc(&observed.dmarc_txt, observed.dmarc_found_at.as_deref());
     let mx = expected.mx.as_deref().map(|m| check_mx(&observed.mx, m));
+    let report_auth = check_report_auth(&observed.report_auth);
 
     let valid = spf.status == Status::Ok
         && dkim.status == Status::Ok
@@ -227,6 +344,7 @@ pub fn evaluate(expected: &Expected, observed: &Observed) -> DomainResult {
         dkim,
         dmarc,
         mx,
+        report_auth,
         valid,
     }
 }
@@ -265,6 +383,7 @@ mod tests {
             dmarc_txt: vec!["v=DMARC1; p=none".into()],
             dmarc_found_at: Some("_dmarc.sub.example.com".into()),
             mx: vec!["mail.example.com.".into()],
+            report_auth: Vec::new(),
         }
     }
 
@@ -361,5 +480,75 @@ mod tests {
             dmarc_names("example.com"),
             vec!["_dmarc.example.com".to_string()]
         );
+    }
+
+    #[test]
+    fn rua_addresses_yield_their_hosts() {
+        assert_eq!(
+            rua_domains("v=DMARC1; p=none; rua=mailto:a@x.example,mailto:b@y.example!10m"),
+            vec!["x.example".to_string(), "y.example".to_string()]
+        );
+        assert!(rua_domains("v=DMARC1; p=reject").is_empty());
+    }
+
+    /// Reporting to your own organizational domain is consent to
+    /// yourself: nothing to publish, nothing to check.
+    #[test]
+    fn a_same_domain_rua_needs_no_authorization() {
+        assert!(
+            report_auth_names("example.com", "v=DMARC1; p=none; rua=mailto:d@example.com")
+                .is_empty()
+        );
+        assert!(
+            report_auth_names(
+                "mail.example.com",
+                "v=DMARC1; p=none; rua=mailto:d@example.com"
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn an_external_rua_names_the_record_the_other_host_must_publish() {
+        assert_eq!(
+            report_auth_names(
+                "sub.example.com",
+                "v=DMARC1; p=none; rua=mailto:d@other.example"
+            ),
+            vec!["sub.example.com._report._dmarc.other.example".to_string()]
+        );
+    }
+
+    /// The incident: `rua` was repointed at another domain without that
+    /// domain publishing the authorization, and every receiver silently
+    /// stopped sending reports. Nothing else in the check notices — the
+    /// DMARC record itself is still perfectly valid.
+    #[test]
+    fn an_unauthorized_external_rua_is_reported_missing() {
+        let mut o = all_good();
+        o.report_auth = vec![(
+            "sub.example.com._report._dmarc.other.example".into(),
+            Vec::new(),
+        )];
+        let r = evaluate(&expected(), &o);
+        let auth = r.report_auth.expect("a destination was checked");
+        assert_eq!(auth.status, Status::Missing);
+        assert!(auth.observed.unwrap().contains("will NOT be sent"));
+        // Where reports go says nothing about whether mail authenticates.
+        assert!(r.valid);
+    }
+
+    #[test]
+    fn an_authorized_external_rua_is_ok_and_no_destination_is_none() {
+        let mut o = all_good();
+        o.report_auth = vec![(
+            "sub.example.com._report._dmarc.other.example".into(),
+            vec!["v=DMARC1".into()],
+        )];
+        assert_eq!(
+            evaluate(&expected(), &o).report_auth.unwrap().status,
+            Status::Ok
+        );
+        assert!(evaluate(&expected(), &all_good()).report_auth.is_none());
     }
 }

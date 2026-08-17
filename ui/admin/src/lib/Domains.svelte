@@ -206,9 +206,11 @@
 
           <p class="text-sm opacity-70">
             Publish these records in the DNS zone for
-            <code>{d.domain.split(".").slice(-2).join(".")}</code>. Values must
-            match exactly — the checker compares what DNS actually serves,
-            including that the DKIM key is the one the relay signs with.
+            <code>{d.domain.split(".").slice(-2).join(".")}</code>. SPF, DKIM
+            and MX must match exactly — the checker compares what DNS actually
+            serves, including that the DKIM key is the one the relay signs
+            with. The DMARC row is your published policy as last seen, not a
+            value postbud requires.
           </p>
 
           <div class="overflow-x-auto">
@@ -231,6 +233,9 @@
                     <td class="hidden sm:table-cell"><code class="text-xs break-all">{r.name}</code></td>
                     <td class="max-w-xs sm:max-w-md">
                       <code class="text-xs break-all line-clamp-2" title={r.value}>{r.value}</code>
+                      {#if r.prescribed === false && r.note}
+                        <div class="text-xs opacity-60 mt-1">{r.note}</div>
+                      {/if}
                       {#if st === "mismatch" && observedOf(d.check, r.kind)}
                         <div class="text-xs text-error mt-1">seen: {observedOf(d.check, r.kind)}</div>
                       {/if}
@@ -245,6 +250,27 @@
               </tbody>
             </table>
           </div>
+
+          <!-- A `rua` pointing at another domain is only honoured if that
+               domain publishes its consent. Nothing else on this card
+               notices it missing: the DMARC record itself stays valid
+               while every receiver quietly stops sending reports. -->
+          {#if d.check?.report_auth_status === "missing"}
+            <div class="alert alert-warning text-sm py-2">
+              <div>
+                <span class="font-semibold">DMARC reports are not being delivered.</span>
+                {d.check.report_auth_observed}
+                <div class="opacity-80 mt-1">
+                  Publish that name as a TXT record with the value
+                  <code>v=DMARC1</code> in the receiving domain's zone.
+                </div>
+              </div>
+            </div>
+          {:else if d.check?.report_auth_status === "ok"}
+            <p class="text-xs opacity-60">
+              DMARC reports authorised: <code>{d.check.report_auth_observed}</code>
+            </p>
+          {/if}
         </div>
       </div>
     {:else}

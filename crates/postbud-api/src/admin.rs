@@ -476,28 +476,57 @@ struct DomainView {
     check: Option<postbud_db::domain::CheckRow>,
 }
 
-fn record_rows(d: &postbud_db::domain::SendingDomain) -> Vec<serde_json::Value> {
+/// The paste-ready DNS rows for one domain.
+///
+/// SPF, DKIM and MX are prescriptions: postbud knows the exact value it
+/// requires and compares DNS to it byte-for-byte. DMARC is not — the
+/// check only asks that a policy exists, because postbud has no opinion
+/// on what yours should be. Showing a made-up `p=none` next to the other
+/// three implied it did, under a heading promising the values are the
+/// ones compared, beside a Copy button. On a `p=reject` domain that is a
+/// one-click downgrade to monitoring-only, and nothing here would report
+/// it: the prefix still matches. So once a check has seen the real
+/// record, that is what is shown, and it is marked as observed rather
+/// than prescribed.
+fn record_rows(
+    d: &postbud_db::domain::SendingDomain,
+    check: Option<&postbud_db::domain::CheckRow>,
+) -> Vec<serde_json::Value> {
+    let dmarc_observed = check.and_then(|c| c.dmarc_observed.clone());
     let mut rows = vec![
         serde_json::json!({
             "kind": "spf", "type": "TXT", "name": d.domain,
             "value": d.spf_expected,
+            "prescribed": true,
         }),
         serde_json::json!({
             "kind": "dkim", "type": "TXT",
             "name": format!("{}._domainkey.{}", d.dkim_selector, d.domain),
             "value": format!("v=DKIM1; h=sha256; k=rsa; p={}", d.dkim_public_key),
+            "prescribed": true,
         }),
-        serde_json::json!({
-            "kind": "dmarc", "type": "TXT",
-            "name": format!("_dmarc.{}", d.domain),
-            "value": "v=DMARC1; p=none",
-            "note": "or inherited from the parent domain's policy",
-        }),
+        match &dmarc_observed {
+            Some(observed) => serde_json::json!({
+                "kind": "dmarc", "type": "TXT",
+                "name": format!("_dmarc.{}", d.domain),
+                "value": observed,
+                "prescribed": false,
+                "note": "published policy, as last seen -- postbud does not require a particular one",
+            }),
+            None => serde_json::json!({
+                "kind": "dmarc", "type": "TXT",
+                "name": format!("_dmarc.{}", d.domain),
+                "value": "v=DMARC1; p=none",
+                "prescribed": false,
+                "note": "a suggested starting policy -- nothing is published yet, or inherited from the parent domain",
+            }),
+        },
     ];
     if let Some(mx) = &d.mx_expected {
         rows.push(serde_json::json!({
             "kind": "mx", "type": "MX", "name": d.domain,
             "value": format!("10 {mx}"),
+            "prescribed": true,
         }));
     }
     rows
@@ -508,10 +537,13 @@ async fn domains(State(state): State<AppState>, _admin: Admin) -> ApiResult<Json
     let mut checks = postbud_db::domain::latest_checks(&state.pool).await?;
     Ok(Json(
         list.into_iter()
-            .map(|d| DomainView {
-                records: record_rows(&d),
-                check: checks.remove(&d.id),
-                domain: d,
+            .map(|d| {
+                let check = checks.remove(&d.id);
+                DomainView {
+                    records: record_rows(&d, check.as_ref()),
+                    check,
+                    domain: d,
+                }
             })
             .collect(),
     ))
@@ -616,7 +648,9 @@ async fn domain_add(
     .map_err(|e| ApiError::BadRequest(e.to_string()))?;
 
     Ok(Json(DomainView {
-        records: record_rows(&created),
+        // Nothing has been checked yet, so the DMARC row falls back to a
+        // suggestion — which is honest for a domain that has none.
+        records: record_rows(&created, None),
         check: None,
         domain: created,
     }))

@@ -85,12 +85,33 @@ pub async fn observe(
 
     let mx = mx(resolver, domain).await?;
 
+    // A `rua` pointing at another domain is only honoured if that domain
+    // publishes its consent. Nothing else in the check would notice it
+    // missing: the DMARC record itself stays perfectly valid while every
+    // receiver quietly stops sending reports.
+    let mut report_auth = Vec::new();
+    if let (Some(found_at), Some(record)) = (
+        dmarc_found_at.as_deref(),
+        dmarc_txt.iter().find(|r| {
+            r.trim_start()
+                .get(..8)
+                .is_some_and(|p| p.eq_ignore_ascii_case("v=DMARC1"))
+        }),
+    ) {
+        let publishing = found_at.strip_prefix("_dmarc.").unwrap_or(found_at);
+        for name in dnscheck::report_auth_names(publishing, record) {
+            let records = txt(resolver, &name).await?;
+            report_auth.push((name, records));
+        }
+    }
+
     Ok(Observed {
         domain_txt,
         dkim_txt,
         dmarc_txt,
         dmarc_found_at,
         mx,
+        report_auth,
     })
 }
 
