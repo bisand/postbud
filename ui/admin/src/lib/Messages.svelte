@@ -59,6 +59,24 @@
     suppressed: "badge-neutral",
   };
 
+  /// What a status word means to a reader is not what it means in the
+  /// database. `sent` records that the smarthost accepted the message and
+  /// returned a queue id; postbud never learns whether it reached the
+  /// mailbox, because Postfix owns delivery. Rendered raw, "sent" gets
+  /// read as "arrived" -- the one question this screen cannot answer, and
+  /// the answer a reader most wants. The stored value is untouched: only
+  /// the word on the screen changes.
+  const label = {
+    sent: "handed to relay",
+  };
+
+  const hint = {
+    sent:
+      "The relay accepted this message and returned a queue id. " +
+      "Delivery to the recipient's server is Postfix's job and is not " +
+      "recorded here -- look the queue id up in the mail log for that.",
+  };
+
   async function load() {
     error = "";
     rows = null;
@@ -137,7 +155,10 @@
             <h2 class="card-title text-base break-all">{detail.subject}</h2>
             <p class="text-sm opacity-70">
               {detail.tenant} → {detail.rcpt_to}
-              <span class="badge badge-sm ml-2 {badge[detail.status] ?? ''}">{detail.status}</span>
+              <span
+                class="badge badge-sm ml-2 {badge[detail.status] ?? ''}"
+                title={hint[detail.status] ?? ""}
+              >{label[detail.status] ?? detail.status}</span>
             </p>
           </div>
           <a class="btn btn-sm" href="#messages">← Back</a>
@@ -275,7 +296,8 @@
           <select class="select select-bordered select-sm" bind:value={status}>
             <option value="">all</option>
             <option>queued</option>
-            <option>sent</option>
+            <!-- Value stays `sent`: it is the API's filter term. -->
+            <option value="sent">handed to relay</option>
             <option>failed</option>
             <option>suppressed</option>
           </select>
@@ -314,7 +336,12 @@
                   <td class="hidden sm:table-cell">{m.tenant}</td>
                   <td class="break-all">{m.rcpt_to}</td>
                   <td class="hidden md:table-cell max-w-xs truncate" title={m.subject}>{m.subject}</td>
-                  <td><span class="badge badge-sm {badge[m.status] ?? ''}">{m.status}</span></td>
+                  <td>
+                    <span
+                      class="badge badge-sm whitespace-nowrap {badge[m.status] ?? ''}"
+                      title={hint[m.status] ?? ""}
+                    >{label[m.status] ?? m.status}</span>
+                  </td>
                   <td class="hidden sm:table-cell">{m.attempts}</td>
                 </tr>
               {:else}

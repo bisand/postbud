@@ -33,7 +33,9 @@
   <div class="flex flex-col gap-4">
     <div class="stats stats-vertical sm:stats-horizontal bg-base-100 border border-base-300 w-full">
       <div class="stat">
-        <div class="stat-title">Sent, last 24 h</div>
+        <!-- "Handed to relay", not "sent": the count is messages the
+             smarthost accepted, which is the last thing postbud sees. -->
+        <div class="stat-title">Handed to relay, last 24 h</div>
         <div class="stat-value text-success">{statusOf("sent")?.last_24h ?? 0}</div>
         <div class="stat-desc">{statusOf("sent")?.total ?? 0} all time</div>
       </div>
@@ -81,7 +83,7 @@
               {@const total = d.sent + d.failed + d.suppressed + d.queued}
               <div
                 class="flex-1 flex flex-col justify-end h-full tooltip"
-                data-tip={`${d.day}: ${d.sent} sent, ${d.failed} failed, ${d.suppressed} suppressed, ${d.queued} queued`}
+                data-tip={`${d.day}: ${d.sent} handed to relay, ${d.failed} failed, ${d.suppressed} suppressed, ${d.queued} queued`}
               >
                 <div class="w-full bg-error" style="height:{((d.failed / maxDay) * 100).toFixed(1)}%"></div>
                 <div class="w-full bg-warning" style="height:{(((d.suppressed + d.queued) / maxDay) * 100).toFixed(1)}%"></div>
