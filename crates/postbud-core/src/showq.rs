@@ -71,7 +71,7 @@ mod tests {
     /// Captured verbatim from a live relay while a receiver was rate
     /// limiting us. If Postfix ever changes the framing, this is what
     /// notices.
-    const CAPTURED: &[u8] = b"protocol\0mail_queue_list_protocol\0\0queue_name\0deferred\0queue_id\03F373F5418\0time\01787026965\0size\05794\0forced_expire\00\0sender\0no-reply@example.com\0recipient\0user@example.net\0reason\0host mx.example.net[192.0.2.22] said: 451 4.7.7 Please try again later. IP rate-limited. (in reply to end of DATA command)\0\0queue_name\0active\0queue_id\0004E6F5409\0time\01787026952\0size\03118\0forced_expire\00\0sender\0no-reply@example.com\0recipient\0other@example.net\0\0\0";
+    const CAPTURED: &[u8] = b"protocol\x00mail_queue_list_protocol\x00\x00queue_name\x00deferred\x00queue_id\x003F373F5418\x00time\x001787026965\x00size\x005794\x00forced_expire\x000\x00sender\x00no-reply@example.com\x00recipient\x00user@example.net\x00reason\x00host mx.example.net[192.0.2.22] said: 451 4.7.7 Please try again later. IP rate-limited. (in reply to end of DATA command)\x00\x00queue_name\x00active\x00queue_id\x00004E6F5409\x00time\x001787026952\x00size\x003118\x00forced_expire\x000\x00sender\x00no-reply@example.com\x00recipient\x00other@example.net\x00\x00\x00";
 
     #[test]
     fn the_opening_protocol_record_is_not_a_queue_entry() {
