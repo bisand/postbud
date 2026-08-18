@@ -60,12 +60,20 @@ spec:
                   name: postbud-secrets
                   key: BOUNCE_INGEST_TOKEN
           volumeMounts:
-            # The socket directory ONLY, never /var/spool/postfix itself.
-            # `public/` holds showq and nothing else; the queue directories
-            # beside it hold message content, which has no business inside
-            # a container that only needs to ask what is queued.
-            - name: postfix-public
-              mountPath: /var/spool/postfix/public
+            # ONE SOCKET, not the directory it sits in. `public/` also
+            # holds `cleanup` and `pickup` -- Postfix's mail INJECTION
+            # sockets. Mounting the directory would hand this pod a way to
+            # post mail straight into the queue, bypassing postbud, the
+            # suppression list and the delivery record, which is the whole
+            # point of keeping the relay's mynetworks closed.
+            #
+            # It also happens to be the only thing that works: `public/`
+            # is drwx--x--- postfix:postdrop, so a container that is not
+            # in the postdrop group cannot traverse into it. The socket
+            # itself is srw-rw-rw-, and the kubelet sets up the mount, so
+            # no group membership is needed this way.
+            - name: showq
+              mountPath: /var/spool/postfix/public/showq
           resources:
             requests:
               memory: 16Mi
@@ -78,10 +86,10 @@ spec:
             capabilities:
               drop: ["ALL"]
       volumes:
-        - name: postfix-public
+        - name: showq
           hostPath:
             # Postfix still runs on the host. When it moves into the
             # cluster this becomes a shared volume with its pod and
             # nothing else here changes.
-            path: /var/spool/postfix/public
-            type: Directory
+            path: /var/spool/postfix/public/showq
+            type: Socket
