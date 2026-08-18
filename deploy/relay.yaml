@@ -183,7 +183,12 @@ spec:
         # again, and it is this pod's. Sharing the spool volume means it
         # reads the same showq the Postfix beside it is serving.
         - name: queue-report
-          image: postbud
+          # The same image as postbud, published under a second name so
+          # it can be pinned apart in kustomization.yaml. Without that,
+          # every postbud release changes this pod template and
+          # `strategy: Recreate` stops mail for a change that cannot
+          # affect it.
+          image: postbud-queue-report
           args: ["queue-report"]
           env:
             - name: POSTBUD_URL

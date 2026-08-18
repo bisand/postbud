@@ -15,20 +15,27 @@ resources:
 # changes, so Flux sees no diff and never redeploys -- the cluster
 # silently sticks on whatever it first pulled.
 #
-# The relay is pinned SEPARATELY from postbud, and deliberately so.
+# Everything in the relay pod is pinned SEPARATELY from postbud, and
+# deliberately so.
 #
-# Every release rebuilds all three images, but the relay ones are `apk
-# add` over Alpine and change only when their Dockerfile or base does.
-# Tying them to postbud's tag would mean a dashboard fix restarts the
-# MTA -- and `strategy: Recreate` makes that a gap with no relay at all,
-# so a change that cannot affect mail would stop it anyway.
+# `strategy: Recreate` means rolling the relay is a gap with no relay at
+# all. Tying it to postbud's tag would stop mail for changes that cannot
+# affect mail -- a dashboard fix restarting the MTA.
 #
-# Bump the relay tag when the relay images change. Leaving it behind is
-# not drift; it is the point.
+# That includes postbud-queue-report, which is the postbud image under a
+# second name. Pinning only postfix and opendkim did NOT work: the
+# reporter runs the postbud binary, so `name: postbud` matched inside
+# the relay pod and rolled it anyway.
+#
+# Bump these three when the relay changes. Leaving them behind is not
+# drift; it is the point.
 images:
   - name: postbud
     newName: ghcr.io/bisand/postbud
-    newTag: v0.11.1
+    newTag: v0.11.2
+  - name: postbud-queue-report
+    newName: ghcr.io/bisand/postbud-queue-report
+    newTag: v0.11.2
   - name: postbud-postfix
     newName: ghcr.io/bisand/postbud-postfix
     newTag: v0.11.0
