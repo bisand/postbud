@@ -93,6 +93,23 @@ notify_classes = resource, software
 # receiver looks like a burst and is scored accordingly.
 default_destination_concurrency_limit = 5
 smtp_destination_rate_delay = 1s
+
+# Hold a connection open long enough to send the NEXT message over it.
+#
+# Postfix defaults both of these to 2s, which for spread-out transactional
+# mail means never: a fresh TCP and TLS handshake per message. Measured on
+# a live relay, 53 deliveries to one receiver cost 83 handshakes and zero
+# reuse. Receivers that rate-limit on reputation count connection events,
+# so the least efficient possible shape is also the one most likely to be
+# scored -- and `smtp_destination_rate_delay` above makes it worse by
+# pinning per-destination concurrency to 1, so on-demand caching never
+# sees a destination busy enough to start caching.
+#
+# BOTH are needed. `connection_cache_ttl_limit` is the cap the scache
+# server enforces; raising only the smtp-side value is silently clamped
+# back down to it.
+connection_cache_ttl_limit = 30s
+smtp_connection_cache_time_limit = 30s
 maximal_queue_lifetime = 1d
 bounce_queue_lifetime = 1d
 message_size_limit = 26214400
