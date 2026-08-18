@@ -1,20 +1,17 @@
 # The relay, in the cluster.
 #
-# STAGE 1 (this file today): runs beside the host's Postfix, on the pod
-# network, with NO port 25 exposed. Everything except inbound gets proven
-# -- submission, DKIM signing, direct delivery to remote MX, the bounce
-# pipe -- while the relay that carries real mail keeps running untouched.
-# Outbound is SNAT'd to the node's address either way, so PTR, HELO and
-# DKIM behave exactly as they will after cutover.
+# hostNetwork, because inbound port 25 must see the real client address:
+# a Service would SNAT it and break inbound SPF, logging and the reject
+# rules. It also keeps outbound leaving as the node's address, so PTR and
+# HELO stay valid, and it means the worker's RELAY_HOST=10.42.0.1 reaches
+# this pod unchanged.
 #
-# STAGE 2 (cutover): stop the host's Postfix, add `hostNetwork: true`, and
-# move the queue-report container in here from its own DaemonSet. Only
-# the inbound path is untested by then.
-#
-# Deliberately NOT a queue-report container yet. That reporter concludes
-# "delivered" from a queue id being ABSENT, and this pod's queue is empty
-# of everything the production relay is carrying -- it would report the
-# host's outstanding mail as delivered.
+# dnsPolicy Default, NOT ClusterFirstWithHostNet: Postfix resolves MX for
+# every delivery, and pointing that at CoreDNS would put a cluster pod in
+# the path of all outgoing mail. The host resolver is what the relay used
+# before and has no such dependency. The consequence is that cluster DNS
+# names do not resolve here, which is why postbud is reached on the
+# node's loopback below rather than by service name.
 #
 # Config and keys are NOT in this repo: they name hosts, domains and
 # addresses, and this repo stays generic. They are created out of band --
@@ -53,6 +50,8 @@ spec:
       labels:
         app: postbud-relay
     spec:
+      hostNetwork: true
+      dnsPolicy: Default
       # No fsGroup: it makes every mounted volume group writable, which
       # Postfix rejects as an unsafe queue directory. The DKIM keys are
       # made readable by copying them instead -- see the opendkim
@@ -122,7 +121,10 @@ spec:
           image: postbud-postfix
           env:
             - name: POSTBUD_URL
-              value: http://postbud-api.postbud.svc.cluster.local:8080
+              # The API's nodePort on the node's own loopback. With
+              # dnsPolicy Default there is no cluster DNS here, and this
+              # is the address the host's bounce script already used.
+              value: http://127.0.0.1:30080
             - name: POSTBUD_BOUNCE_TOKEN_FILE
               value: /etc/postbud/bounce.token
           volumeMounts:
@@ -177,6 +179,43 @@ spec:
           resources:
             requests: { memory: 32Mi, cpu: 5m }
             limits: { memory: 128Mi }
+        # Moved in from its own DaemonSet at cutover: there is one queue
+        # again, and it is this pod's. Sharing the spool volume means it
+        # reads the same showq the Postfix beside it is serving.
+        - name: queue-report
+          image: postbud
+          args: ["queue-report"]
+          env:
+            - name: POSTBUD_URL
+              value: http://127.0.0.1:30080
+            - name: QUEUE_REPORT_INTERVAL
+              value: "5"
+            - name: BOUNCE_INGEST_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: postbud-secrets
+                  key: BOUNCE_INGEST_TOKEN
+          volumeMounts:
+            - { name: spool, mountPath: /var/spool/postfix }
+          resources:
+            requests: { memory: 16Mi, cpu: 5m }
+            limits: { memory: 64Mi }
+          securityContext:
+            # As the postfix uid, because /var/spool/postfix/public is
+            # 0710 postfix:postdrop and `drop: ALL` removes
+            # CAP_DAC_OVERRIDE -- so even root cannot traverse into it.
+            # Running as the owner is the fix that does not loosen the
+            # directory or hand back a capability.
+            #
+            # Numeric on purpose: this image has no passwd file, and the
+            # only thing that matters is matching the uid the Postfix
+            # container writes as.
+            runAsUser: 100
+            runAsGroup: 102
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
       volumes:
         - name: spool
           persistentVolumeClaim:

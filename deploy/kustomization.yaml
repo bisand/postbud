@@ -6,7 +6,7 @@ resources:
   - namespace.yaml
   - postgres.yaml
   - postbud.yaml
-  - queue-report.yaml
+  - relay.yaml
 
 # The image tag lives here and nowhere else: bumping this line is the
 # deploy, reverting it is the rollback.
@@ -14,7 +14,18 @@ resources:
 # Always a release tag, never `latest`. With `latest` the tag never
 # changes, so Flux sees no diff and never redeploys -- the cluster
 # silently sticks on whatever it first pulled.
+#
+# All three carry the same tag: one release, one version, one line to
+# change. The relay images are `apk add` over Alpine and contain no build
+# of ours, but versioning them together is what keeps this file the
+# single answer to "what is running".
 images:
   - name: postbud
     newName: ghcr.io/bisand/postbud
-    newTag: v0.10.1
+    newTag: v0.11.0
+  - name: postbud-postfix
+    newName: ghcr.io/bisand/postbud-postfix
+    newTag: v0.11.0
+  - name: postbud-opendkim
+    newName: ghcr.io/bisand/postbud-opendkim
+    newTag: v0.11.0
