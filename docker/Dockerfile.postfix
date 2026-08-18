@@ -10,7 +10,13 @@
 # Alpine maintains the postfix package, so upgrading is a base-image bump
 # and CVE tracking is theirs. The image is a handful of megabytes and
 # carries no build of ours.
-FROM alpine:3.22
+#
+# 3.23 rather than the newest: it carries postfix 3.10.x, the same series
+# the host relay runs, so moving into the cluster changes WHERE Postfix
+# runs and not WHICH Postfix runs. 3.24 ships 3.11 and is the right next
+# step -- as its own change, with its own verification, once the move is
+# done and proven.
+FROM alpine:3.23
 
 RUN apk add --no-cache postfix ca-certificates tzdata curl openssl \
     && adduser -D -H -s /sbin/nologin postbud \

@@ -7,7 +7,7 @@
 # The private keys are NOT in this image. They arrive as a mounted
 # Secret, and the image has no idea which domains it signs for until the
 # KeyTable and SigningTable ConfigMaps are mounted beside them.
-FROM alpine:3.22
+FROM alpine:3.23
 
 RUN apk add --no-cache opendkim opendkim-utils \
     && rm -rf /var/cache/apk/*
