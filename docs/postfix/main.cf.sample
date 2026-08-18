@@ -86,6 +86,24 @@ virtual_alias_maps = hash:/etc/postfix/virtual
 # master.cf hands them to postbud.
 notify_classes = resource, software
 
+# If postbud-bounce is told where to POST by environment variable rather
+# than by its defaults, BOTH of these lists must name the variables, and
+# setting only export_environment silently does nothing:
+#
+#   import_environment  what the master KEEPS from the environment it was
+#                       started with; anything unlisted is discarded at
+#                       startup, so it never survives to be exported.
+#   export_environment  what daemons pass to child processes such as a
+#                       pipe transport.
+#
+# Get it wrong and the script starts without them, falls back to a path
+# that does not exist, and every bounce DEFERS rather than failing --
+# exit 75 requeues instead of losing it, so the queue fills quietly and
+# the suppression list learns nothing.
+#
+# import_environment = $import_environment POSTBUD_URL POSTBUD_BOUNCE_TOKEN_FILE
+# export_environment = $export_environment POSTBUD_URL POSTBUD_BOUNCE_TOKEN_FILE
+
 # --------------------------------------------------------------- limits
 #
 # Small on purpose. This relay serves two applications sending a few
@@ -99,17 +117,37 @@ smtp_destination_rate_delay = 1s
 # Postfix defaults both of these to 2s, which for spread-out transactional
 # mail means never: a fresh TCP and TLS handshake per message. Measured on
 # a live relay, 53 deliveries to one receiver cost 83 handshakes and zero
-# reuse. Receivers that rate-limit on reputation count connection events,
-# so the least efficient possible shape is also the one most likely to be
-# scored -- and `smtp_destination_rate_delay` above makes it worse by
-# pinning per-destination concurrency to 1, so on-demand caching never
-# sees a destination busy enough to start caching.
+# reuse. `smtp_destination_rate_delay` above makes it worse by pinning
+# per-destination concurrency to 1, so on-demand caching never sees a
+# destination busy enough to start caching.
+#
+# Hygiene rather than a fix for anything: when a receiver did rate-limit
+# this relay, connection count turned out NOT to be the cause -- see
+# minimal_backoff_time below for what was.
 #
 # BOTH are needed. `connection_cache_ttl_limit` is the cap the scache
 # server enforces; raising only the smtp-side value is silently clamped
 # back down to it.
 connection_cache_ttl_limit = 30s
 smtp_connection_cache_time_limit = 30s
+# Wait long enough after a 4xx.
+#
+# Postfix defaults to 300s. A receiver that rate-limited this relay
+# explained the consequence directly: they expect a sender to wait
+# 15-60 minutes after a temporary rejection, "standarden sier enten 30
+# eller 60 minutter", and retrying faster triggers an automatic back-off
+# that escalates. That is what turned a soft 451 into every packet being
+# dropped for two hours -- not volume, and not connection count.
+#
+# The cost is honest: a message whose first attempt defers now waits half
+# an hour rather than five minutes. Against a receiver that stops
+# answering entirely, that is the cheaper of the two.
+#
+# Worth knowing for any new relay: receivers apply this most strictly to
+# an IP with no sending history, and some refuse new addresses for
+# months. A slow warm-up is expected, not optional.
+minimal_backoff_time = 1800s
+
 maximal_queue_lifetime = 1d
 bounce_queue_lifetime = 1d
 message_size_limit = 26214400
