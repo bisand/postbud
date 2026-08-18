@@ -71,7 +71,8 @@ jobs:
 
       # The relay is amd64. No arm64 build until something needs it --
       # every extra platform doubles the build for no one.
-      - uses: docker/build-push-action@v6
+      - id: build
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: ${{ matrix.dockerfile }}
@@ -83,3 +84,24 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # The relay pod runs `postbud queue-report` beside Postfix, so with
+      # one image name a postbud release changes the relay's pod template
+      # and `strategy: Recreate` stops mail for a change that could not
+      # affect it -- a dashboard fix restarting the MTA.
+      #
+      # This publishes the SAME digest under a second name so
+      # deploy/kustomization.yaml can pin it apart. imagetools only
+      # writes a manifest reference: no rebuild, no layers, no extra
+      # storage. It is a second name for one image, not a second image.
+      - name: alias the queue-report image
+        if: matrix.suffix == ''
+        run: |
+          set -eu
+          printf '%s\n' '${{ steps.meta.outputs.tags }}' | while read -r tag; do
+              [ -n "$tag" ] || continue
+              alias=$(printf '%s' "$tag" | sed 's|/postbud:|/postbud-queue-report:|')
+              [ "$alias" != "$tag" ] || continue
+              echo "aliasing $tag -> $alias"
+              docker buildx imagetools create -t "$alias" "$tag"
+          done
