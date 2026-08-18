@@ -1,0 +1,138 @@
+# The relay, in the cluster.
+#
+# STAGE 1 (this file today): runs beside the host's Postfix, on the pod
+# network, with NO port 25 exposed. Everything except inbound gets proven
+# -- submission, DKIM signing, direct delivery to remote MX, the bounce
+# pipe -- while the relay that carries real mail keeps running untouched.
+# Outbound is SNAT'd to the node's address either way, so PTR, HELO and
+# DKIM behave exactly as they will after cutover.
+#
+# STAGE 2 (cutover): stop the host's Postfix, add `hostNetwork: true`, and
+# move the queue-report container in here from its own DaemonSet. Only
+# the inbound path is untested by then.
+#
+# Deliberately NOT a queue-report container yet. That reporter concludes
+# "delivered" from a queue id being ABSENT, and this pod's queue is empty
+# of everything the production relay is carrying -- it would report the
+# host's outstanding mail as delivered.
+#
+# Config and keys are NOT in this repo: they name hosts, domains and
+# addresses, and this repo stays generic. They are created out of band --
+# see scripts/secrets-sync.sh for keeping a copy of the secrets.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postbud-relay-spool
+  namespace: postbud
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      # The live spool is under a megabyte; this is room for a receiver
+      # being unreachable for the full four-day queue lifetime.
+      storage: 2Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postbud-relay
+  namespace: postbud
+spec:
+  replicas: 1
+  # RECREATE, never RollingUpdate. Two Postfix masters sharing one spool
+  # is queue corruption, and a rolling update would briefly do exactly
+  # that. A few seconds without a relay is the cheaper failure: postbud
+  # keeps accepting and queueing while it is gone.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: postbud-relay
+  template:
+    metadata:
+      labels:
+        app: postbud-relay
+    spec:
+      securityContext:
+        # opendkim's uid/gid in the Alpine package. fsGroup is what makes
+        # the mounted DKIM keys readable: opendkim REFUSES keys it
+        # considers unsafely permissioned, so they are mounted 0440 and
+        # group-owned rather than the default 0644.
+        runAsUser: 100
+        runAsGroup: 101
+        fsGroup: 101
+      initContainers:
+        # A self-signed cert for inbound STARTTLS, generated per pod.
+        # The host used Debian's snakeoil cert, which is also self-signed
+        # -- no verifier anywhere checks it. Generated at runtime rather
+        # than baked into the image, because a private key in a published
+        # image layer is a published private key.
+        - name: tls
+          image: postbud-postfix
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              test -s /tls/tls.key && exit 0
+              openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
+                -keyout /tls/tls.key -out /tls/tls.crt \
+                -subj "/CN=$(cat /etc/mailname)"
+              chmod 0400 /tls/tls.key
+          volumeMounts:
+            - { name: tls, mountPath: /tls }
+            - { name: postfix-config, mountPath: /etc/mailname, subPath: mailname }
+      containers:
+        - name: postfix
+          image: postbud-postfix
+          env:
+            - name: POSTBUD_URL
+              value: http://postbud-api.postbud.svc.cluster.local:8080
+            - name: POSTBUD_BOUNCE_TOKEN_FILE
+              value: /etc/postbud/bounce.token
+          volumeMounts:
+            - { name: spool, mountPath: /var/spool/postfix }
+            # data_directory: TLS session caches. Losing these on restart
+            # costs a handshake, so an emptyDir is the right lifetime.
+            - { name: data, mountPath: /var/lib/postfix }
+            - { name: tls, mountPath: /etc/postfix/tls, readOnly: true }
+            - { name: bounce-token, mountPath: /etc/postbud, readOnly: true }
+            # subPath per file: mounting the whole directory would hide
+            # the rest of /etc/postfix that the package provides.
+            - { name: postfix-config, mountPath: /etc/postfix/main.cf, subPath: main.cf }
+            - { name: postfix-config, mountPath: /etc/postfix/master.cf, subPath: master.cf }
+            - { name: postfix-config, mountPath: /etc/postfix/virtual, subPath: virtual }
+            - { name: postfix-config, mountPath: /etc/postfix/virtual_recipients, subPath: virtual_recipients }
+            - { name: postfix-config, mountPath: /etc/mailname, subPath: mailname }
+          resources:
+            requests: { memory: 64Mi, cpu: 10m }
+            limits: { memory: 256Mi }
+        - name: opendkim
+          image: postbud-opendkim
+          volumeMounts:
+            - { name: opendkim-config, mountPath: /etc/opendkim, readOnly: true }
+            - { name: dkim-keys, mountPath: /etc/dkimkeys, readOnly: true }
+          resources:
+            requests: { memory: 32Mi, cpu: 5m }
+            limits: { memory: 128Mi }
+      volumes:
+        - name: spool
+          persistentVolumeClaim:
+            claimName: postbud-relay-spool
+        - { name: data, emptyDir: {} }
+        - { name: tls, emptyDir: {} }
+        - name: postfix-config
+          configMap:
+            name: postbud-postfix-config
+        - name: opendkim-config
+          configMap:
+            name: postbud-opendkim-config
+        - name: dkim-keys
+          secret:
+            secretName: postbud-dkim
+            defaultMode: 0440
+        - name: bounce-token
+          secret:
+            secretName: postbud-secrets
+            items:
+              - { key: BOUNCE_INGEST_TOKEN, path: bounce.token }
