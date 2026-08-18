@@ -11,6 +11,12 @@ resources:
 # The image tag lives here and nowhere else: bumping this line is the
 # deploy, reverting it is the rollback.
 #
+# The `postbud` tag is set by the release workflow, not by hand -- doing
+# it manually was the step that got forgotten, and forgetting it leaves
+# the cluster on the previous version while the release notes claim
+# otherwise. The relay tags below are NOT touched automatically; see the
+# note about them further down.
+#
 # Always a release tag, never `latest`. With `latest` the tag never
 # changes, so Flux sees no diff and never redeploys -- the cluster
 # silently sticks on whatever it first pulled.

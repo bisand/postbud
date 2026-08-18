@@ -18,7 +18,9 @@ jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      # contents: write so a release can bump the deployed tag itself --
+      # see the last step.
+      contents: write
       packages: write
     strategy:
       # One release, three images, one tag across all of them. The relay
@@ -105,3 +107,47 @@ jobs:
               echo "aliasing $tag -> $alias"
               docker buildx imagetools create -t "$alias" "$tag"
           done
+
+      # A release IS the deploy. Editing deploy/kustomization.yaml by
+      # hand afterwards was the step that got forgotten, and forgetting
+      # it means the cluster silently stays on the previous version while
+      # the release notes say otherwise.
+      #
+      # ONLY the `postbud` entry. The relay images are rebuilt by every
+      # release but are byte-identical unless their Dockerfile or base
+      # changed, and bumping their tag would roll Postfix -- with
+      # `strategy: Recreate`, stopping mail -- for an image that did not
+      # change. Those move deliberately, in the commit that changes them.
+      - name: point the deployment at this release
+        if: github.event_name == 'release' && matrix.suffix == ''
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -eu
+          git fetch origin main
+          git checkout main
+          python3 - "$TAG" <<'PY'
+          import re, sys
+          tag = sys.argv[1]
+          p = "deploy/kustomization.yaml"
+          s = open(p).read()
+          new, n = re.subn(
+              r"(- name: postbud\n    newName: ghcr\.io/[^\n]+\n    newTag: )\S+",
+              lambda m: m.group(1) + tag,
+              s,
+              count=1,
+          )
+          assert n == 1, "did not find the postbud image entry to bump"
+          open(p, "w").write(new)
+          PY
+          if git diff --quiet deploy/kustomization.yaml; then
+              echo "already at $TAG"
+              exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add deploy/kustomization.yaml
+          # [skip ci] so the push does not trigger another image build:
+          # nothing here changes an image.
+          git commit -m "Deploy $TAG [skip ci]"
+          git push origin main
