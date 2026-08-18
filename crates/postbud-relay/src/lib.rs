@@ -10,6 +10,7 @@
 //! key exists in exactly one place.
 
 pub mod dnscheck;
+pub mod queuereport;
 pub mod worker;
 
 use anyhow::{Context, anyhow};

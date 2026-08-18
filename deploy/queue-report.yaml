@@ -1,0 +1,87 @@
+# What became of the mail after the relay took it.
+#
+# postbud records that the smarthost accepted a message and returned a
+# queue id, and by design learns nothing more -- Postfix owns delivery
+# and only reports back by bouncing. A 4xx deferral never bounces, so a
+# blocked destination leaves every message in the relay's queue looking
+# exactly like one that arrived.
+#
+# This reads Postfix's `showq` socket directly and posts the queue to the
+# API, which reconciles it against the queue ids it stored. Present means
+# still with the relay; absent means it left, which means delivered
+# unless a bounce said otherwise.
+#
+# A DaemonSet, not a Deployment: exactly one reporter per relay should be
+# reading one queue. The worker next door is scaled to two for
+# availability, which is right for claiming batches and wrong for this.
+#
+# No image of its own. It is the same `FROM scratch` postbud binary under
+# a different subcommand, which is why reading showq is implemented in
+# Rust rather than shelling out to postqueue -- there is no shell in the
+# image to shell out with, and adding Postfix to get one command would
+# cost 40 MB on every postbud image.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: postbud-queue-report
+  namespace: postbud
+spec:
+  selector:
+    matchLabels:
+      app: postbud-queue-report
+  template:
+    metadata:
+      labels:
+        app: postbud-queue-report
+    spec:
+      containers:
+        - name: queue-report
+          image: postbud
+          args: ["queue-report"]
+          env:
+            - name: POSTBUD_URL
+              value: http://postbud-api.postbud.svc.cluster.local:8080
+            # The floor on useful frequency is Postfix's, not ours: a fast
+            # 4xx is knowable in about three seconds, while a destination
+            # that blackholes packets takes smtp_connect_timeout times the
+            # number of MX hosts before Postfix can call it deferred at
+            # all. Polling harder reports nothing sooner.
+            - name: QUEUE_REPORT_INTERVAL
+              value: "5"
+            # One key, not envFrom. The relay side holds as little as
+            # possible -- no database credentials, no schema knowledge --
+            # and `envFrom: postbud-secrets` would hand this pod
+            # DATABASE_URL and ADMIN_TOKEN for a job that needs neither.
+            # Shared with the bounce pipe: both are the relay telling us
+            # what became of mail.
+            - name: BOUNCE_INGEST_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: postbud-secrets
+                  key: BOUNCE_INGEST_TOKEN
+          volumeMounts:
+            # The socket directory ONLY, never /var/spool/postfix itself.
+            # `public/` holds showq and nothing else; the queue directories
+            # beside it hold message content, which has no business inside
+            # a container that only needs to ask what is queued.
+            - name: postfix-public
+              mountPath: /var/spool/postfix/public
+          resources:
+            requests:
+              memory: 16Mi
+              cpu: 5m
+            limits:
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: postfix-public
+          hostPath:
+            # Postfix still runs on the host. When it moves into the
+            # cluster this becomes a shared volume with its pod and
+            # nothing else here changes.
+            path: /var/spool/postfix/public
+            type: Directory

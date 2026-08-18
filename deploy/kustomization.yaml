@@ -6,6 +6,7 @@ resources:
   - namespace.yaml
   - postgres.yaml
   - postbud.yaml
+  - queue-report.yaml
 
 # The image tag lives here and nowhere else: bumping this line is the
 # deploy, reverting it is the rollback.

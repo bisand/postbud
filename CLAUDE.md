@@ -21,6 +21,22 @@ reputation checklist in [docs/dns.md](docs/dns.md).
   rather than running beside it. Two rails means two suppression lists
   that disagree, and one system mailing addresses the other knows are
   dead.
+- **The relay reports its queue back** (Postfix's `showq` socket ->
+  `POST /v1/relay/queue`, deploy/queue-report.yaml). This does NOT
+  walk back the decision above: nothing here resolves MX, queues, or
+  negotiates TLS. It closes the reporting gap that decision leaves --
+  a 4xx deferral produces no bounce, so a blocked destination left
+  every message looking like a clean handoff. Queue ids present are
+  still with the relay; absent ones have left, which means delivered
+  UNLESS a bounce says otherwise, and never for a handoff inside the
+  grace window. The reporter is a DaemonSet running the same
+  `FROM scratch` image under `queue-report`, which is why showq is
+  parsed in Rust rather than shelling out to `postqueue` -- there is no
+  shell in that image, and adding Postfix for one command would cost
+  40 MB on every postbud image. State lives in three mutable columns on
+  `message`, not a history table: "still deferred" repeated every 5s is one fact, and
+  the history worth keeping is already in `delivery_attempt` and
+  `bounce_report`.
 - **One identifier survives all three hops**: caller's idempotency key →
   Postfix queue id (parsed from `250 Ok: queued as …`, stored on the
   message) → the same id in the bounce's `X-Postfix-Queue-ID`. That header

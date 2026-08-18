@@ -13,6 +13,7 @@ pub mod bounces;
 pub mod error;
 pub mod messages;
 pub mod oidc;
+pub mod relayqueue;
 pub mod suppressions;
 
 use axum::routing::{delete, get, post};
@@ -58,6 +59,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/suppressions", post(suppressions::add))
         .route("/v1/suppressions/{id}", delete(suppressions::remove))
         .route("/v1/bounces", post(bounces::ingest))
+        .route("/v1/relay/queue", post(relayqueue::ingest))
         .merge(admin::router())
         // A panic in one request becomes a 500, never a dead process that
         // stops delivering everyone else's mail.

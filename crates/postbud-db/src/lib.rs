@@ -15,6 +15,7 @@ pub mod bounce;
 pub mod domain;
 pub mod message;
 pub mod relay;
+pub mod relayqueue;
 pub mod suppression;
 pub mod tenant;
 

@@ -57,6 +57,9 @@
     failed: "badge-error",
     queued: "badge-warning",
     suppressed: "badge-neutral",
+    delivered: "badge-success",
+    deferred: "badge-warning",
+    active: "badge-info",
   };
 
   /// What a status word means to a reader is not what it means in the
@@ -68,14 +71,36 @@
   /// the word on the screen changes.
   const label = {
     sent: "handed to relay",
+    delivered: "delivered",
+    deferred: "deferred at relay",
+    active: "at relay",
   };
+
+  /// The relay's own account wins over ours once we have one. `sent` only
+  /// ever meant "the smarthost took it and gave us a queue id"; once the
+  /// queue report says the message is still sitting there, repeating
+  /// "handed to relay" is true and useless.
+  function stateOf(m) {
+    return m.status === "sent" && m.relay_state ? m.relay_state : m.status;
+  }
 
   const hint = {
     sent:
-      "The relay accepted this message and returned a queue id. " +
-      "Delivery to the recipient's server is Postfix's job and is not " +
-      "recorded here -- look the queue id up in the mail log for that.",
+      "The relay accepted this message and returned a queue id. Nothing " +
+      "has been observed since -- either the relay reporter is not " +
+      "running, or this message predates it.",
+    delivered:
+      "Gone from the relay's queue with no bounce, so the receiver took " +
+      "it. This is the relay's account, not a read receipt.",
+    deferred:
+      "Still in the relay's queue. Postfix keeps retrying within " +
+      "maximal_queue_lifetime; the reason below is the receiver's own.",
+    active: "The relay is attempting delivery right now.",
   };
+
+  function hintOf(m) {
+    return m.relay_state_detail ?? hint[stateOf(m)] ?? "";
+  }
 
   async function load() {
     error = "";
@@ -156,9 +181,9 @@
             <p class="text-sm opacity-70">
               {detail.tenant} → {detail.rcpt_to}
               <span
-                class="badge badge-sm ml-2 {badge[detail.status] ?? ''}"
-                title={hint[detail.status] ?? ""}
-              >{label[detail.status] ?? detail.status}</span>
+                class="badge badge-sm ml-2 {badge[stateOf(detail)] ?? ''}"
+                title={hintOf(detail)}
+              >{label[stateOf(detail)] ?? detail.status}</span>
             </p>
           </div>
           <a class="btn btn-sm" href="#messages">← Back</a>
@@ -171,7 +196,23 @@
           <div><span class="opacity-60">Completed:</span> {fmtTime(detail.completed_at)}</div>
           <div class="break-all"><span class="opacity-60">Idempotency key:</span> <code class="text-xs">{detail.idempotency_key}</code></div>
           <div class="break-all"><span class="opacity-60">Postfix queue id:</span> <code class="text-xs">{detail.relay_queue_id ?? "–"}</code></div>
+          <!-- Shown with its timestamp on purpose: a relay state is only
+               as good as the last report, and a stale one should look
+               stale rather than authoritative. -->
+          <div><span class="opacity-60">Relay state:</span>
+            {label[detail.relay_state] ?? "not observed"}
+            {#if detail.relay_state_at}<span class="opacity-60">— {fmtTime(detail.relay_state_at)}</span>{/if}
+          </div>
         </div>
+
+        {#if detail.relay_state === "deferred" && detail.relay_state_detail}
+          <div class="alert alert-warning text-sm py-2">
+            <div>
+              <span class="font-semibold">Still in the relay's queue.</span>
+              {detail.relay_state_detail}
+            </div>
+          </div>
+        {/if}
 
         {#if detail.last_error}
           <div class="alert alert-error text-sm py-2">{detail.last_error}</div>
@@ -338,9 +379,9 @@
                   <td class="hidden md:table-cell max-w-xs truncate" title={m.subject}>{m.subject}</td>
                   <td>
                     <span
-                      class="badge badge-sm whitespace-nowrap {badge[m.status] ?? ''}"
-                      title={hint[m.status] ?? ""}
-                    >{label[m.status] ?? m.status}</span>
+                      class="badge badge-sm whitespace-nowrap {badge[stateOf(m)] ?? ''}"
+                      title={hintOf(m)}
+                    >{label[stateOf(m)] ?? m.status}</span>
                   </td>
                   <td class="hidden sm:table-cell">{m.attempts}</td>
                 </tr>

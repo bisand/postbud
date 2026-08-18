@@ -1445,6 +1445,8 @@ name = "postbud-core"
 version = "0.4.1"
 dependencies = [
  "rand 0.8.7",
+ "serde",
+ "serde_json",
  "sha2",
 ]
 
@@ -1473,6 +1475,8 @@ dependencies = [
  "lettre",
  "postbud-core",
  "postbud-db",
+ "reqwest",
+ "serde_json",
  "sqlx",
  "tokio",
  "uuid",

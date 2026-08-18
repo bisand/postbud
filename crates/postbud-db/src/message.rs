@@ -408,6 +408,8 @@ pub struct Status {
     pub subject: String,
     pub relay_queue_id: Option<String>,
     pub last_error: Option<String>,
+    pub relay_state: Option<String>,
+    pub relay_state_detail: Option<String>,
     pub created_at: DateTime<Utc>,
     pub completed_at: Option<DateTime<Utc>>,
 }
@@ -417,7 +419,8 @@ pub struct Status {
 pub async fn status(pool: &PgPool, tenant_id: Uuid, id: Uuid) -> anyhow::Result<Option<Status>> {
     let row = sqlx::query(
         "select id, status, attempts, rcpt_to, subject, relay_queue_id,
-                last_error, created_at, completed_at
+                last_error, relay_state, relay_state_detail,
+                created_at, completed_at
            from message where id = $1 and tenant_id = $2",
     )
     .bind(id)
@@ -434,6 +437,8 @@ pub async fn status(pool: &PgPool, tenant_id: Uuid, id: Uuid) -> anyhow::Result<
         subject: r.get("subject"),
         relay_queue_id: r.get("relay_queue_id"),
         last_error: r.get("last_error"),
+        relay_state: r.get("relay_state"),
+        relay_state_detail: r.get("relay_state_detail"),
         created_at: r.get("created_at"),
         completed_at: r.get("completed_at"),
     }))

@@ -154,6 +154,12 @@ pub struct MessageRow {
     pub attempts: i32,
     pub relay_queue_id: Option<String>,
     pub last_error: Option<String>,
+    /// What the relay did with it AFTER accepting it, from `postqueue -j`.
+    /// None until the relay reporter has covered this message -- honest
+    /// rather than a guess, and what every row says before that.
+    pub relay_state: Option<String>,
+    pub relay_state_detail: Option<String>,
+    pub relay_state_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub completed_at: Option<DateTime<Utc>>,
 }
@@ -183,6 +189,7 @@ pub async fn messages(
     let rows = sqlx::query(
         "select m.id, t.name as tenant, m.mail_from, m.rcpt_to, m.subject,
                 m.status, m.attempts, m.relay_queue_id, m.last_error,
+                m.relay_state, m.relay_state_detail, m.relay_state_at,
                 m.created_at, m.completed_at
            from message m join tenant t on t.id = m.tenant_id
           where ($1::text is null or t.name = $1)
@@ -214,6 +221,9 @@ pub async fn messages(
             attempts: r.get("attempts"),
             relay_queue_id: r.get("relay_queue_id"),
             last_error: r.get("last_error"),
+            relay_state: r.get("relay_state"),
+            relay_state_detail: r.get("relay_state_detail"),
+            relay_state_at: r.get("relay_state_at"),
             created_at: r.get("created_at"),
             completed_at: r.get("completed_at"),
         })
@@ -276,7 +286,9 @@ pub async fn message_detail(pool: &PgPool, id: Uuid) -> anyhow::Result<Option<Me
         "select m.id, t.name as tenant, m.idempotency_key, m.mail_from,
                 m.from_name, m.rcpt_to, m.reply_to, m.subject, m.body_text,
                 m.body_html, m.body_html is not null as has_html, m.status, m.attempts,
-                m.relay_queue_id, m.last_error, m.created_at, m.completed_at,
+                m.relay_queue_id, m.last_error,
+                m.relay_state, m.relay_state_detail, m.relay_state_at,
+                m.created_at, m.completed_at,
                 m.body_purged_at
            from message m join tenant t on t.id = m.tenant_id
           where m.id = $1",
@@ -350,6 +362,9 @@ pub async fn message_detail(pool: &PgPool, id: Uuid) -> anyhow::Result<Option<Me
             attempts: r.get("attempts"),
             relay_queue_id: r.get("relay_queue_id"),
             last_error: r.get("last_error"),
+            relay_state: r.get("relay_state"),
+            relay_state_detail: r.get("relay_state_detail"),
+            relay_state_at: r.get("relay_state_at"),
             created_at: r.get("created_at"),
             completed_at: r.get("completed_at"),
         },

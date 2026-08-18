@@ -10,7 +10,9 @@ pub mod authz;
 pub mod dnscheck;
 pub mod dsn;
 pub mod rdns;
+pub mod relayqueue;
 pub mod retry;
+pub mod showq;
 
 /// What a delivery attempt or a bounce means for the message.
 ///

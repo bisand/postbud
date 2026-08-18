@@ -33,6 +33,14 @@ enum Command {
     /// Read a raw DSN on stdin and record it. This is what Postfix pipes
     /// bounces into; see docs/postfix/.
     BounceIngest,
+    /// Report the relay's queue to postbud, continuously.
+    ///
+    /// Runs beside Postfix and reads its `showq` socket directly, so it
+    /// needs no Postfix binaries -- which is what keeps this image
+    /// `FROM scratch`. Separate from `worker` on purpose: the worker is
+    /// scaled for throughput, while exactly one reporter per relay
+    /// should be reading one queue.
+    QueueReport,
     /// Blank message bodies that have outlived their delivery.
     Purge {
         /// Override BODY_RETENTION_DAYS.
@@ -139,6 +147,16 @@ async fn main() -> Result<()> {
                 "bounce ingested: {} report(s), {} suppressed, {} unmatched",
                 result.reports, result.suppressed, result.unmatched
             );
+        }
+
+        Command::QueueReport => {
+            let config = postbud_relay::queuereport::Config::from_env()?;
+            println!(
+                "postbud queue-report reading {} every {}s",
+                config.socket,
+                config.interval.as_secs()
+            );
+            postbud_relay::queuereport::run(config).await?;
         }
 
         Command::Purge { days } => {

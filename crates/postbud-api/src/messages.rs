@@ -150,6 +150,12 @@ pub struct StatusResponse {
     /// and the value to grep the mail log for.
     pub relay_queue_id: Option<String>,
     pub last_error: Option<String>,
+    /// What the relay did with it after accepting it: `deferred`,
+    /// `active`, `delivered`, or absent when nothing has been observed.
+    /// The caller's dispatch log cannot answer this and neither could we
+    /// before -- `status: sent` has only ever meant the smarthost took it.
+    pub relay_state: Option<String>,
+    pub relay_state_detail: Option<String>,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub completed_at: Option<chrono::DateTime<chrono::Utc>>,
 }
@@ -175,6 +181,8 @@ pub async fn status(
         subject: found.subject,
         relay_queue_id: found.relay_queue_id,
         last_error: found.last_error,
+        relay_state: found.relay_state,
+        relay_state_detail: found.relay_state_detail,
         created_at: found.created_at,
         completed_at: found.completed_at,
     }))
