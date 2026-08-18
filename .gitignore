@@ -19,3 +19,7 @@ ui/admin/node_modules/
 
 # rustfmt backups
 **/*.rs.bk
+
+# Local copies of cluster Secrets. Never committable -- see
+# scripts/secrets-sync.sh, which refuses to write anywhere not ignored.
+secrets/
