@@ -58,6 +58,11 @@ local_recipient_maps =
 smtp_tls_security_level = may
 smtp_tls_loglevel = 1
 smtp_tls_CApath = /etc/ssl/certs
+# `btree:` needs Berkeley DB, which Debian has and Alpine does not. On a
+# build without it, tlsmgr logs an error and the cache simply does not
+# work -- TLS still negotiates, it just renegotiates every time, which is
+# invisible until you look. `lmdb:` is the alternative Postfix names for
+# this case; check `postconf -m` for what your build supports.
 smtp_tls_session_cache_database = btree:${data_directory}/smtp_scache
 
 # ------------------------------------------------------------- inbound TLS

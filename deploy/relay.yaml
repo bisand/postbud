@@ -80,6 +80,29 @@ spec:
               # rather than hoped for.
               chown root:root /var/spool/postfix
               chmod 0755 /var/spool/postfix
+
+              # The spool OUTLIVES the image, and Alpine renumbers system
+              # groups between releases -- postdrop moved from gid 101 to
+              # 102 between 3.23 and 3.24. The queue directories keep the
+              # old numeric group, so `maildrop`, which the setgid
+              # postdrop binary must write into, silently belongs to the
+              # wrong group after a base-image bump and local submission
+              # stops working.
+              #
+              # `postfix set-permissions` repairs this, but also tries to
+              # chown /etc/postfix and exits non-zero against a read-only
+              # ConfigMap mount, so the repair is spelled out here.
+              #
+              # Absent on a fresh volume: Postfix creates them correctly
+              # itself, and these are no-ops.
+              for d in maildrop public; do
+                  [ -d "/var/spool/postfix/$d" ] || continue
+                  chown postfix:postdrop "/var/spool/postfix/$d"
+              done
+              [ -d /var/spool/postfix/maildrop ] && chmod 0730 /var/spool/postfix/maildrop
+              [ -d /var/spool/postfix/public ] && chmod 0710 /var/spool/postfix/public
+              [ -d /var/spool/postfix/pid ] && { chown root:root /var/spool/postfix/pid; chmod 0755 /var/spool/postfix/pid; }
+              true
               chown postfix:root /var/lib/postfix
               chmod 0755 /var/lib/postfix
               chmod 0755 /tls
