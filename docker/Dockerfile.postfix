@@ -1,0 +1,27 @@
+# Postfix, and nothing else.
+#
+# No entrypoint script and no env-var templating on purpose. The whole
+# configuration arrives as ConfigMaps holding main.cf and master.cf
+# verbatim -- the same 46 lines that ran on the host -- because the
+# settings that matter here (mynetworks, reject_unauth_destination,
+# smtpd_milters, the connection-cache limits) are exactly the ones a
+# templating layer would hide.
+#
+# Alpine maintains the postfix package, so upgrading is a base-image bump
+# and CVE tracking is theirs. The image is a handful of megabytes and
+# carries no build of ours.
+FROM alpine:3.22
+
+RUN apk add --no-cache postfix ca-certificates tzdata \
+    && rm -rf /var/cache/apk/*
+
+# The queue is a volume; this is only the mount point. A pod restart that
+# lost the spool would discard mail Postfix has promised to retry for
+# days, which is the one thing this service must never do.
+VOLUME ["/var/spool/postfix"]
+
+EXPOSE 25
+
+# Foreground: the container IS the master process, so a crash is a
+# restart rather than a pod that looks alive with no mail flowing.
+CMD ["postfix", "start-fg"]

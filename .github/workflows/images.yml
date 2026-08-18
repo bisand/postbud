@@ -20,6 +20,20 @@ jobs:
     permissions:
       contents: read
       packages: write
+    strategy:
+      # One release, three images, one tag across all of them. The relay
+      # images carry no build of ours -- they are `apk add` and a config
+      # mount -- but they are versioned together so `newTag` in
+      # deploy/kustomization.yaml stays the single line that says what is
+      # running.
+      matrix:
+        include:
+          - suffix: ""
+            dockerfile: Dockerfile
+          - suffix: "-postfix"
+            dockerfile: docker/Dockerfile.postfix
+          - suffix: "-opendkim"
+            dockerfile: docker/Dockerfile.opendkim
     steps:
       - uses: actions/checkout@v4
         with:
@@ -41,7 +55,7 @@ jobs:
       - id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository }}
+          images: ghcr.io/${{ github.repository }}${{ matrix.suffix }}
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern=v{{version}}
@@ -60,6 +74,7 @@ jobs:
       - uses: docker/build-push-action@v6
         with:
           context: .
+          file: ${{ matrix.dockerfile }}
           platforms: linux/amd64
           push: true
           build-args: |

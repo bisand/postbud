@@ -1,0 +1,19 @@
+# opendkim as a milter, reachable over localhost.
+#
+# Postfix already talks to it as `inet:127.0.0.1:8891`, and with
+# hostNetwork the containers in this pod share that loopback -- so the
+# milter configuration carried over from the host works unchanged.
+#
+# The private keys are NOT in this image. They arrive as a mounted
+# Secret, and the image has no idea which domains it signs for until the
+# KeyTable and SigningTable ConfigMaps are mounted beside them.
+FROM alpine:3.22
+
+RUN apk add --no-cache opendkim opendkim-utils \
+    && rm -rf /var/cache/apk/*
+
+EXPOSE 8891
+
+# -f keeps it in the foreground, -x names the config that the ConfigMap
+# supplies.
+CMD ["opendkim", "-f", "-x", "/etc/opendkim/opendkim.conf"]
