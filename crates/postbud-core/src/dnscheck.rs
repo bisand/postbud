@@ -23,9 +23,10 @@ pub struct Observed {
     pub domain_txt: Vec<String>,
     /// TXT records at `<selector>._domainkey.<domain>`.
     pub dkim_txt: Vec<String>,
-    /// TXT records at the nearest `_dmarc.` name that had any, walking
-    /// from `_dmarc.<domain>` toward the organizational domain — DMARC
-    /// §6.6.3: a subdomain without its own policy inherits.
+    /// TXT records at the first `_dmarc.` name that had any, of the two
+    /// RFC 7489 §6.6.3 defines: the domain itself, then its
+    /// organizational domain. A subdomain without its own policy
+    /// inherits the organizational one — never an intermediate label's.
     pub dmarc_txt: Vec<String>,
     /// Where the DMARC records were found, when they were.
     pub dmarc_found_at: Option<String>,
@@ -349,17 +350,28 @@ pub fn evaluate(expected: &Expected, observed: &Observed) -> DomainResult {
     }
 }
 
-/// The `_dmarc.` names to try, nearest first — DMARC inheritance without
-/// a public-suffix list: walk toward the registrable domain and stop
-/// while at least two labels remain. Wrong for multi-label suffixes like
-/// co.uk (it would try one name too many, which merely wastes a lookup),
-/// right for the common case.
+/// The `_dmarc.` names a receiver would try, in order.
+///
+/// RFC 7489 §6.6.3 is exactly two lookups: the domain itself, then its
+/// ORGANIZATIONAL domain. Intermediate labels are never consulted.
+///
+/// This used to walk every label in between, which cost more than a
+/// wasted lookup: for `test.postbud.example` it would find a policy at
+/// `_dmarc.postbud.example` and report the domain green against a record
+/// no receiver will ever apply to it, while Gmail and Microsoft used the
+/// organizational domain's instead. The admin UI showed one record and
+/// the world used another.
+///
+/// The organizational domain is still approximated as the last two
+/// labels — see [`organizational_domain`] — so this remains wrong for
+/// multi-label suffixes like co.uk. That approximation is unchanged; only
+/// the labels between are dropped.
 pub fn dmarc_names(domain: &str) -> Vec<String> {
-    let mut names = Vec::new();
-    let mut labels: Vec<&str> = domain.split('.').collect();
-    while labels.len() >= 2 {
-        names.push(format!("_dmarc.{}", labels.join(".")));
-        labels.remove(0);
+    let domain = domain.trim_end_matches('.').to_ascii_lowercase();
+    let org = organizational_domain(&domain);
+    let mut names = vec![format!("_dmarc.{domain}")];
+    if org != domain && !org.is_empty() {
+        names.push(format!("_dmarc.{org}"));
     }
     names
 }
@@ -466,19 +478,33 @@ mod tests {
         assert_eq!(r.mx.unwrap().status, Status::Ok);
     }
 
+    /// RFC 7489 §6.6.3: the domain, then the organizational domain. The
+    /// labels in between are never consulted, so a policy published at
+    /// `_dmarc.sub.example.com` does not apply to `mail.sub.example.com`
+    /// and must not be reported as though it did.
     #[test]
-    fn dmarc_walk_up_names_stop_at_the_registrable_domain() {
+    fn dmarc_lookup_skips_intermediate_labels() {
         assert_eq!(
             dmarc_names("mail.sub.example.com"),
             vec![
                 "_dmarc.mail.sub.example.com".to_string(),
-                "_dmarc.sub.example.com".to_string(),
                 "_dmarc.example.com".to_string(),
             ]
         );
         assert_eq!(
             dmarc_names("example.com"),
             vec!["_dmarc.example.com".to_string()]
+        );
+    }
+
+    #[test]
+    fn dmarc_names_normalize_case_and_the_root_dot() {
+        assert_eq!(
+            dmarc_names("Mail.Example.COM."),
+            vec![
+                "_dmarc.mail.example.com".to_string(),
+                "_dmarc.example.com".to_string(),
+            ]
         );
     }
 
