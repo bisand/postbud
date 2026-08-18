@@ -149,6 +149,40 @@ Diagnostic-Code: smtp; 550 5.1.1 <nosuch@example.com>: Recipient address
     rejected: User unknown in local recipient table
 ";
 
+    /// What Postfix returns when a message outlives
+    /// `maximal_queue_lifetime`. Note the contradiction it carries: RFC
+    /// 3464 defines `Action: failed` as permanent, while the enhanced
+    /// status is 4.x, which is transient.
+    const EXPIRY_BOUNCE: &str = "\
+Content-Type: message/delivery-status
+
+Reporting-MTA: dns; mail.example.org
+X-Postfix-Queue-ID: 08785F9FED
+
+Final-Recipient: rfc822; user@example.net
+Action: failed
+Status: 4.4.7
+Diagnostic-Code: X-Postfix; delivery time expired
+";
+
+    /// The status must win over the action.
+    ///
+    /// A destination that blocked us for four days is not a dead mailbox,
+    /// and suppressing on this would take a working address out of
+    /// service globally because someone else's network was down. Reading
+    /// `Action: failed` as authoritative is the obvious mistake here, and
+    /// this is what stops it being made later.
+    #[test]
+    fn an_expired_queue_entry_never_suppresses() {
+        let reports = parse(EXPIRY_BOUNCE);
+        assert_eq!(reports.len(), 1);
+        let r = &reports[0];
+        assert_eq!(r.relay_queue_id.as_deref(), Some("08785F9FED"));
+        assert_eq!(r.status.as_deref(), Some("4.4.7"));
+        assert_eq!(r.classification, Classification::Transient);
+        assert!(!r.should_suppress());
+    }
+
     #[test]
     fn a_hard_bounce_yields_the_queue_id_and_suppresses() {
         let reports = parse(HARD_BOUNCE);
