@@ -15,14 +15,20 @@ resources:
 # changes, so Flux sees no diff and never redeploys -- the cluster
 # silently sticks on whatever it first pulled.
 #
-# All three carry the same tag: one release, one version, one line to
-# change. The relay images are `apk add` over Alpine and contain no build
-# of ours, but versioning them together is what keeps this file the
-# single answer to "what is running".
+# The relay is pinned SEPARATELY from postbud, and deliberately so.
+#
+# Every release rebuilds all three images, but the relay ones are `apk
+# add` over Alpine and change only when their Dockerfile or base does.
+# Tying them to postbud's tag would mean a dashboard fix restarts the
+# MTA -- and `strategy: Recreate` makes that a gap with no relay at all,
+# so a change that cannot affect mail would stop it anyway.
+#
+# Bump the relay tag when the relay images change. Leaving it behind is
+# not drift; it is the point.
 images:
   - name: postbud
     newName: ghcr.io/bisand/postbud
-    newTag: v0.11.0
+    newTag: v0.11.1
   - name: postbud-postfix
     newName: ghcr.io/bisand/postbud-postfix
     newTag: v0.11.0
