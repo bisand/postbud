@@ -12,8 +12,14 @@
 # carries no build of ours.
 FROM alpine:3.22
 
-RUN apk add --no-cache postfix ca-certificates tzdata \
+RUN apk add --no-cache postfix ca-certificates tzdata curl openssl \
+    && adduser -D -H -s /sbin/nologin postbud \
     && rm -rf /var/cache/apk/*
+
+# The bounce pipe. curl and a token, no database credentials and no
+# postbud binary to keep in step with the deployment -- see the script.
+COPY docs/postfix/postbud-bounce /usr/local/bin/postbud-bounce
+RUN chmod 0755 /usr/local/bin/postbud-bounce
 
 # The queue is a volume; this is only the mount point. A pod restart that
 # lost the spool would discard mail Postfix has promised to retry for
