@@ -53,33 +53,45 @@ spec:
       labels:
         app: postbud-relay
     spec:
-      securityContext:
-        # opendkim's uid/gid in the Alpine package. fsGroup is what makes
-        # the mounted DKIM keys readable: opendkim REFUSES keys it
-        # considers unsafely permissioned, so they are mounted 0440 and
-        # group-owned rather than the default 0644.
-        runAsUser: 100
-        runAsGroup: 101
-        fsGroup: 101
+      # No fsGroup: it makes every mounted volume group writable, which
+      # Postfix rejects as an unsafe queue directory. The DKIM keys are
+      # made readable by copying them instead -- see the opendkim
+      # container's command.
       initContainers:
         # A self-signed cert for inbound STARTTLS, generated per pod.
         # The host used Debian's snakeoil cert, which is also self-signed
         # -- no verifier anywhere checks it. Generated at runtime rather
         # than baked into the image, because a private key in a published
         # image layer is a published private key.
-        - name: tls
+        - name: prepare
           image: postbud-postfix
           command:
             - sh
             - -c
             - |
               set -eu
+              # The queue directory must not be world writable. local-path
+              # provisions volumes 0777, and Postfix will not run `pickup`
+              # on a spool it considers unsafe -- SILENTLY: mail stops in
+              # maildrop, never reaches cleanup, so the milter never sees
+              # it and messages would go out UNSIGNED under
+              # milter_default_action = accept. Everything reports healthy
+              # while nothing is signed, which is why this is fixed here
+              # rather than hoped for.
+              chown root:root /var/spool/postfix
+              chmod 0755 /var/spool/postfix
+              chown postfix:root /var/lib/postfix
+              chmod 0755 /var/lib/postfix
+              chmod 0755 /tls
+
               test -s /tls/tls.key && exit 0
               openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
                 -keyout /tls/tls.key -out /tls/tls.crt \
                 -subj "/CN=$(cat /etc/mailname)"
               chmod 0400 /tls/tls.key
           volumeMounts:
+            - { name: spool, mountPath: /var/spool/postfix }
+            - { name: data, mountPath: /var/lib/postfix }
             - { name: tls, mountPath: /tls }
             - { name: postfix-config, mountPath: /etc/mailname, subPath: mailname }
       containers:
@@ -109,9 +121,36 @@ spec:
             limits: { memory: 256Mi }
         - name: opendkim
           image: postbud-opendkim
+          # busybox syslogd in front, writing to this container's stdout,
+          # because opendkim can only log via syslog and a container has
+          # no syslogd. Running without it saves a process and costs the
+          # ability to diagnose anything: Postfix reports only that the
+          # milter refused a message, never why.
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              syslogd -O /dev/stdout -n &
+
+              # opendkim refuses a key whose DIRECTORY is readable by
+              # others, and Kubernetes mounts secret volumes world
+              # readable whatever defaultMode says about the files. So
+              # the keys are copied into a directory we own, and the
+              # check stays on rather than being switched off.
+              #
+              # KeyTable already points at /etc/dkimkeys, so the copy
+              # lands where the config expects and nothing else changes.
+              mkdir -p /etc/dkimkeys
+              cp /run/dkim-src/*.private /etc/dkimkeys/
+              chown -R opendkim:opendkim /etc/dkimkeys
+              chmod 0700 /etc/dkimkeys
+              chmod 0400 /etc/dkimkeys/*.private
+
+              exec opendkim -f -x /etc/opendkim/opendkim.conf
           volumeMounts:
             - { name: opendkim-config, mountPath: /etc/opendkim, readOnly: true }
-            - { name: dkim-keys, mountPath: /etc/dkimkeys, readOnly: true }
+            - { name: dkim-keys, mountPath: /run/dkim-src, readOnly: true }
           resources:
             requests: { memory: 32Mi, cpu: 5m }
             limits: { memory: 128Mi }
@@ -130,7 +169,11 @@ spec:
         - name: dkim-keys
           secret:
             secretName: postbud-dkim
-            defaultMode: 0440
+            # Read by the container's root before it drops privileges,
+            # then copied to a directory opendkim owns. The mode here is
+            # about who can read the MOUNT; the copy is what satisfies
+            # opendkim's own check on the directory.
+            defaultMode: 0400
         - name: bounce-token
           secret:
             secretName: postbud-secrets
