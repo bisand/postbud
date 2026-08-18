@@ -21,6 +21,15 @@ reputation checklist in [docs/dns.md](docs/dns.md).
   rather than running beside it. Two rails means two suppression lists
   that disagree, and one system mailing addresses the other knows are
   dead.
+- **The relay runs in the cluster**, not on the host: Postfix, opendkim
+  and the queue reporter are three containers in one pod
+  (deploy/relay.yaml), with `hostNetwork` so inbound port 25 sees the
+  real client address and outbound still leaves as the node's IP. Its
+  config is NOT in this repo -- main.cf names hosts and domains -- so the
+  ConfigMaps are created out of band like the secrets. `strategy:
+  Recreate`, because two Postfix masters on one spool is queue
+  corruption; the relay images are pinned APART from postbud's in
+  kustomization.yaml so a dashboard release does not stop mail.
 - **The relay reports its queue back** (Postfix's `showq` socket ->
   `POST /v1/relay/queue`, deploy/queue-report.yaml). This does NOT
   walk back the decision above: nothing here resolves MX, queues, or
@@ -53,9 +62,15 @@ reputation checklist in [docs/dns.md](docs/dns.md).
   subdomains — a leaked key for one tenant must not be able to send as
   another. The Message-ID's domain is the SENDER's domain, never an
   installation hostname baked into the code.
-- **No secrets in this repo.** The DKIM private key lives on the relay
-  host and nowhere else. API keys are stored as SHA-256 digests (a 32-byte
-  random key needs no password hash) and shown exactly once.
+- **No secrets in this repo.** The DKIM private key is a Kubernetes
+  Secret, mounted into the opendkim container -- NOT a file on a host any
+  more, and never in git. That was a deliberate trade: a hostPath key is
+  better protected at rest (k3s does not encrypt secrets by default) but
+  invisible to `kubectl`, absent from every manifest, and forgotten the
+  day the node is rebuilt. `scripts/secrets-sync.sh` takes and restores
+  copies, showing fingerprints rather than values. API keys are stored as
+  SHA-256 digests (a 32-byte random key needs no password hash) and shown
+  exactly once.
 - **Message bodies are personal data** and are purged after
   `BODY_RETENTION_DAYS`; the delivery record is kept forever.
 - **The API is the only way to send.** The relay's `mynetworks` is

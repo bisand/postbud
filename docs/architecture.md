@@ -147,11 +147,13 @@ wrong when it is the address that is dead.
 | | Runs on | Holds |
 | --- | --- | --- |
 | postbud + Postgres | wherever the apps run | queue, suppression list, delivery history, message bodies |
-| Postfix + OpenDKIM | its own VM, own IPv4 + PTR | the IP reputation, the DKIM private key |
+| Postfix + OpenDKIM + queue reporter | three containers in one pod on the relay node, `hostNetwork` for port 25 | the IP reputation |
 
-The relay holds no application credentials and no state worth backing up:
-losing that VM costs an IP address, not a secret. The DKIM private key
-exists in exactly one place and never in this repository.
+The relay holds no application credentials. It DOES now hold the DKIM
+private key as a mounted Secret rather than a file on a host -- the
+trade is discoverability over at-rest protection, since a key on a
+filesystem is invisible to `kubectl` and forgotten when the node is
+rebuilt. It is never in this repository either way.
 
 **Only the delivery worker may inject mail.** Postfix's `mynetworks` is
 loopback plus the network the worker actually submits from — and nothing
