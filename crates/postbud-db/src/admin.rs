@@ -51,6 +51,15 @@ pub struct Overview {
     pub bounces_7d: i64,
     /// Bounce reports the parser could not join to a message. A persistently
     /// rising number means queue ids are not being captured on the way out.
+    /// Bounces from the last 7 days that could not be joined to a
+    /// message. WINDOWED on purpose: unjoinable bounces are not a bug
+    /// that gets fixed once, they arrive forever -- backscatter to the
+    /// bounce addresses, DSNs too malformed to parse, reports for
+    /// messages already purged. An all-time count only ever rises, so a
+    /// banner driven by it is permanently lit and therefore ignored,
+    /// which is the opposite of a warning. What the warning is actually
+    /// about is a RISING rate, and a window is what measures that: it
+    /// clears itself when correlation is healthy again.
     pub unmatched_bounces: i64,
 }
 
@@ -123,7 +132,9 @@ pub async fn overview(pool: &PgPool) -> anyhow::Result<Overview> {
            (select count(*) from suppression where removed_at is null) as active_suppressions,
            (select count(*) from bounce_report
              where received_at > now() - interval '7 days') as bounces_7d,
-           (select count(*) from bounce_report where message_id is null) as unmatched_bounces",
+           (select count(*) from bounce_report
+             where message_id is null
+               and received_at > now() - interval '7 days') as unmatched_bounces",
     )
     .fetch_one(pool)
     .await

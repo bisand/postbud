@@ -66,9 +66,11 @@
 
     {#if data.unmatched_bounces > 0}
       <div class="alert alert-warning text-sm">
-        {data.unmatched_bounces} bounce report(s) could not be joined to a
-        message. A rising number means queue ids are not captured on the way
-        out — see the Bounces tab.
+        {data.unmatched_bounces} bounce report(s) in the last 7 days could not
+        be joined to a message. A few are normal — backscatter to the bounce
+        addresses, or a DSN too malformed to parse. A number that keeps
+        climbing means queue ids are not captured on the way out — see the
+        Bounces tab.
       </div>
     {/if}
 
