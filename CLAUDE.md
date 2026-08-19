@@ -135,7 +135,11 @@ reputation checklist in [docs/dns.md](docs/dns.md).
   looked at. Mail that is not a report is counted apart from mail that
   would not parse: only the second is a problem. `dmarc-import` reads
   files for backfill, `dmarc-fetch` makes one pass by hand. The admin
-  page is not built yet.
+  page (`/admin` -> DMARC) is READ-ONLY for every role -- there is no
+  mutating endpoint and there must never be one. It leads with which
+  mechanism carried DMARC rather than the pass rate, because a domain
+  riding DKIM alone reads as a flawless 100% right up until the day the
+  key rotates.
 - **Applied migrations are never edited** — sqlx checksums them. Their
   comments are part of the record, even where newer policy (like this
   file's genericity rule) would phrase them differently today.

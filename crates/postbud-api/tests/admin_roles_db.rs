@@ -123,6 +123,11 @@ async fn a_viewer_reads_everything_and_changes_nothing() {
         "/admin/api/bounces",
         "/admin/api/users",
         "/admin/api/me",
+        // The DMARC surface is read-only for EVERY role -- there is no
+        // mutating counterpart below, and there must never be one: a
+        // report is an unauthenticated claim by a stranger.
+        "/admin/api/dmarc",
+        "/admin/api/dmarc/example.com",
     ] {
         let status = call(&app, "GET", path, &viewer, None).await;
         assert_eq!(status, StatusCode::OK, "viewer reading {path}");

@@ -22,7 +22,7 @@ use axum::{Json, Router, routing::get, routing::post};
 use chrono::{DateTime, Utc};
 use include_dir::{Dir, include_dir};
 use postbud_core::address;
-use postbud_db::{admin, suppression, tenant};
+use postbud_db::{admin, dmarc, suppression, tenant};
 use serde::Deserialize;
 use uuid::Uuid;
 
@@ -61,6 +61,8 @@ pub fn router() -> Router<AppState> {
         .route("/admin/api/relay", get(relay_identity))
         .route("/admin/api/domains", get(domains).post(domain_add))
         .route("/admin/api/domains/{id}", axum::routing::delete(domain_end))
+        .route("/admin/api/dmarc", get(dmarc_domains))
+        .route("/admin/api/dmarc/{domain}", get(dmarc_domain))
         .route("/admin/api/users", get(users).post(user_add))
         .route("/admin/api/users/{id}/role", post(user_role))
         .route("/admin/api/users/{id}", axum::routing::delete(user_end))
@@ -675,6 +677,49 @@ async fn domain_end(
 /// [`AdminWrite`], never here.
 async fn me(admin: Admin) -> Json<serde_json::Value> {
     Json(serde_json::json!({ "actor": admin.actor, "role": admin.role }))
+}
+
+/// What the receivers concluded, per sending domain.
+///
+/// Read-only, and only ever read-only. A DMARC report is a claim by
+/// whoever sent it, and the address in a `rua=` tag is public — anyone
+/// can post a report saying anything about any domain. Nothing on this
+/// surface may act on one, which is why there is no companion
+/// [`AdminWrite`] endpoint here and no button that does anything.
+async fn dmarc_domains(
+    State(state): State<AppState>,
+    _admin: Admin,
+) -> ApiResult<Json<Vec<dmarc::DomainSummary>>> {
+    Ok(Json(dmarc::summary(&state.pool).await?))
+}
+
+#[derive(Debug, Deserialize)]
+struct DmarcWindow {
+    days: Option<i64>,
+}
+
+#[derive(serde::Serialize)]
+struct DmarcDetail {
+    sources: Vec<dmarc::SourceRollup>,
+    daily: Vec<dmarc::DailyPoint>,
+}
+
+async fn dmarc_domain(
+    State(state): State<AppState>,
+    _admin: Admin,
+    Path(domain): Path<String>,
+    Query(window): Query<DmarcWindow>,
+) -> ApiResult<Json<DmarcDetail>> {
+    // Clamped rather than trusted: `days` reaches SQL, and an unbounded
+    // window on a table that only grows is a slow query waiting for the
+    // day there is enough history to notice.
+    let days = window.days.unwrap_or(30).clamp(1, 3650);
+    let domain = domain.trim().to_ascii_lowercase();
+    let (sources, daily) = tokio::try_join!(
+        dmarc::sources(&state.pool, &domain, days),
+        dmarc::daily(&state.pool, &domain, days),
+    )?;
+    Ok(Json(DmarcDetail { sources, daily }))
 }
 
 async fn users(

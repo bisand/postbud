@@ -9,6 +9,7 @@
   import Tenants from "./lib/Tenants.svelte";
   import Bounces from "./lib/Bounces.svelte";
   import Domains from "./lib/Domains.svelte";
+  import Dmarc from "./lib/Dmarc.svelte";
   import Users from "./lib/Users.svelte";
 
   const sections = [
@@ -18,6 +19,7 @@
     { id: "tenants", label: "Tenants", component: Tenants },
     { id: "bounces", label: "Bounces", component: Bounces },
     { id: "domains", label: "Domains", component: Domains },
+    { id: "dmarc", label: "DMARC", component: Dmarc },
     { id: "users", label: "Users", component: Users },
   ];
 
