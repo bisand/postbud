@@ -41,6 +41,17 @@ enum Command {
     /// scaled for throughput, while exactly one reporter per relay
     /// should be reading one queue.
     QueueReport,
+    /// Import DMARC aggregate reports from files or directories.
+    ///
+    /// Reads .xml, .xml.gz, .gz and .zip, recursing into directories, and
+    /// is safe to run twice: a report already held is counted as a
+    /// duplicate and skipped. Reading files rather than a mailbox keeps
+    /// this usable for backfilling an archive that predates postbud.
+    DmarcImport {
+        /// Files or directories to read.
+        #[arg(required = true)]
+        paths: Vec<std::path::PathBuf>,
+    },
     /// Blank message bodies that have outlived their delivery.
     Purge {
         /// Override BODY_RETENTION_DAYS.
@@ -159,6 +170,27 @@ async fn main() -> Result<()> {
             postbud_relay::queuereport::run(config).await?;
         }
 
+        Command::DmarcImport { paths } => {
+            let pool = pool().await?;
+            let outcome = dmarc_import(&pool, &paths).await?;
+            println!(
+                "dmarc import: {} report(s) stored, {} duplicate(s), {} record(s)",
+                outcome.stored, outcome.duplicates, outcome.records
+            );
+            println!();
+            for row in postbud_db::dmarc::summary(&pool).await? {
+                let rate = if row.messages > 0 {
+                    100.0 * row.passed as f64 / row.messages as f64
+                } else {
+                    0.0
+                };
+                println!(
+                    "{:<40} {:>4} report(s) {:>8} msg  {:>6.1}% pass",
+                    row.domain, row.reports, row.messages, rate
+                );
+            }
+        }
+
         Command::Purge { days } => {
             let pool = pool().await?;
             let days = match days {
@@ -174,6 +206,100 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Import every report found under `paths`.
+///
+/// Nothing here stops on a bad file. A directory of reports routinely
+/// contains one that is truncated, or a stray non-report, and refusing the
+/// whole run over it would mean the archive never imports at all. Each
+/// failure is named on stderr and the run continues -- the same bargain
+/// the DSN parser makes, where an unreadable input is a bug report rather
+/// than a fatal error.
+async fn dmarc_import(
+    pool: &sqlx::PgPool,
+    paths: &[std::path::PathBuf],
+) -> Result<postbud_db::dmarc::Ingested> {
+    let mut outcome = postbud_db::dmarc::Ingested::default();
+    for path in collect_report_files(paths) {
+        let blob = match std::fs::read(&path) {
+            Ok(blob) => blob,
+            Err(err) => {
+                eprintln!("skipped {}: {err}", path.display());
+                continue;
+            }
+        };
+        let documents = match postbud_core::dmarc::extract(&blob) {
+            Ok(documents) => documents,
+            Err(err) => {
+                eprintln!("skipped {}: {err}", path.display());
+                continue;
+            }
+        };
+        for document in documents {
+            let report = match postbud_core::dmarc::parse(&document) {
+                Ok(report) => report,
+                Err(err) => {
+                    eprintln!("skipped {}: {err}", path.display());
+                    continue;
+                }
+            };
+            let raw = String::from_utf8_lossy(&document);
+            let records = report.records.len();
+            if postbud_db::dmarc::store(pool, &report, &raw).await? {
+                outcome.stored += 1;
+                outcome.records += records;
+            } else {
+                outcome.duplicates += 1;
+            }
+        }
+    }
+    Ok(outcome)
+}
+
+/// Every file under `paths` that looks like a report, directories walked
+/// depth-first and in a stable order so two runs read the same way.
+fn collect_report_files(paths: &[std::path::PathBuf]) -> Vec<std::path::PathBuf> {
+    fn looks_like_report(path: &std::path::Path) -> bool {
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        name.ends_with(".xml")
+            || name.ends_with(".xml.gz")
+            || name.ends_with(".gz")
+            || name.ends_with(".zip")
+    }
+
+    fn walk(path: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        if path.is_dir() {
+            let mut entries: Vec<_> = match std::fs::read_dir(path) {
+                Ok(entries) => entries.filter_map(|e| e.ok()).map(|e| e.path()).collect(),
+                Err(err) => {
+                    eprintln!("skipped {}: {err}", path.display());
+                    return;
+                }
+            };
+            entries.sort();
+            for entry in entries {
+                walk(&entry, out);
+            }
+        } else if path.is_file() && looks_like_report(path) {
+            out.push(path.to_path_buf());
+        }
+    }
+
+    let mut out = Vec::new();
+    for path in paths {
+        if path.is_file() {
+            // Named explicitly, so honour it whatever it is called.
+            out.push(path.clone());
+        } else {
+            walk(path, &mut out);
+        }
+    }
+    out
 }
 
 async fn pool() -> Result<sqlx::PgPool> {

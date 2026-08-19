@@ -109,6 +109,20 @@ reputation checklist in [docs/dns.md](docs/dns.md).
   "missing" for live records. `DNS_RESOLVERS` overrides.
   Checks are insert-only history. `DNS_SPF_DEFAULT` prefills new
   domains.
+- **DMARC aggregate reports are evidence, never instructions.** The
+  registry says what DNS should carry and `dnscheck` says what it does
+  carry; only the receivers say what they CONCLUDED -- the one outcome
+  postbud cannot see for itself, since a message quarantined at the far
+  end is still a clean `250 Ok: queued as ...`. Parsing is pure in
+  `postbud-core::dmarc`: gzip/zip/bare sniffed by magic bytes rather than
+  filename, decompression capped, DOCTYPE refused and failure messages
+  clipped, because the address in a `rua=` tag is open to anyone on the
+  internet. Storage (0008) is insert-only, deduped on
+  `(org_name, report_id)` because reporters redeliver, and keeps the raw
+  XML so a parser fix can be replayed over history. Nothing parsed here
+  may drive suppression, domain status, or any other automatic action.
+  Today only `dmarc-import` reads files; the IMAP poller and the admin
+  page are not built yet.
 - **Applied migrations are never edited** — sqlx checksums them. Their
   comments are part of the record, even where newer policy (like this
   file's genericity rule) would phrase them differently today.

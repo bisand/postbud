@@ -34,6 +34,14 @@ chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
 dotenvy = "0.15"
 hex = "0.4"
+# DMARC aggregate reports: XML, usually inside a gzip or zip attachment.
+# Unwrapping and parsing are byte transforms rather than I/O, so they sit
+# in postbud-core beside the DSN parser and stay testable without a
+# mailbox. zip's default features drag in bzip2/zstd/AES for formats no
+# reporter uses; deflate is the whole of what DMARC needs.
+flate2 = "1"
+quick-xml = { version = "0.41", features = ["serialize"] }
+zip = { version = "8", default-features = false, features = ["deflate"] }
 # DNS lookups for domain verification (worker-side only).
 hickory-resolver = { version = "0.24", default-features = false, features = [
     "tokio-runtime",
@@ -78,6 +86,9 @@ sqlx = { version = "0.8", features = [
     "uuid",
     "chrono",
     "migrate",
+    # jsonb, for the per-mechanism DMARC auth results that nothing
+    # aggregates and columns would only scatter.
+    "json",
 ] }
 thiserror = "2"
 tokio = { version = "1", features = ["full"] }

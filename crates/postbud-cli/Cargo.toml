@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 postbud-api.workspace = true
+postbud-core.workspace = true
 postbud-db.workspace = true
 postbud-relay.workspace = true
 
