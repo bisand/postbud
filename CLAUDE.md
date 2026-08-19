@@ -66,7 +66,11 @@ reputation checklist in [docs/dns.md](docs/dns.md).
   that blames anything but the address: `5.7.x` is policy -- a domain at
   DMARC `p=reject` with broken auth earns one per message, each naming a
   perfectly healthy recipient. `should_suppress` is an allowlist of the
-  addressing codes and the one seam that decides. Bounce-driven
+  addressing codes PLUS a short list of phrases in which a receiver says
+  the mailbox is missing in its own words -- sendmail answers a dead
+  address with `553 5.3.0 ... No such user here`, filing it under MAIL
+  SYSTEM where the code alone can never suppress. Both sit behind the
+  permanence check, and it is the one seam that decides. Bounce-driven
   suppressions are global, manual ones per-tenant, and lifting is a soft
   delete.
 - **The retry window is ~49 hours**, against the few minutes of the in-app

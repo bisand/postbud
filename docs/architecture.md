@@ -144,6 +144,20 @@ because a code carrying no information must not be read as bad news.
 Everything else is still permanent, still recorded, still never retried —
 it just costs nobody their mail.
 
+The code is not always the truth, though, which is why the receiver's own
+words are a second signal. Sendmail-derived servers answer a nonexistent
+mailbox with `553 5.3.0 ... No such user here` — a dead address filed
+under MAIL SYSTEM, a class where nothing may suppress and nothing should.
+A short list of unambiguous phrases (`no such user`, `user unknown`,
+`recipient not found`, `mailbox not found`, `no mailbox here`) rescues
+exactly that case. It is short on purpose: every phrase names the
+RECIPIENT as missing, and none can be produced by a full mailbox, a policy
+rejection or a broken relay. "does not exist" is deliberately absent,
+because a missing domain says it too. Both signals sit behind the
+permanence check — a receiver that defers while saying "user unknown" is
+contradicting itself, and the safe reading of a contradiction is the one
+that keeps writing to the address.
+
 **Bounce-driven suppressions are global; manual ones are per-tenant.** A
 hard bounce is a fact about the mailbox, not about who was writing to it, so
 one product learning an address is dead protects the other's reputation too.

@@ -45,8 +45,18 @@ impl Report {
     /// outage on OUR side out of service, globally, for every tenant, and
     /// only a human lifting them one at a time puts it back.
     pub fn should_suppress(&self) -> bool {
-        self.classification == Classification::Permanent
-            && self.status.as_deref().is_some_and(recipient_is_the_problem)
+        if self.classification != Classification::Permanent {
+            return false;
+        }
+        // The code first, the receiver's own words second. Both must sit
+        // behind the permanence check: a 4.x.x saying "user unknown" is a
+        // receiver contradicting itself, and the safe reading of a
+        // contradiction is the one that keeps writing to the address.
+        self.status.as_deref().is_some_and(recipient_is_the_problem)
+            || self
+                .diagnostic
+                .as_deref()
+                .is_some_and(names_a_missing_mailbox)
     }
 }
 
@@ -79,6 +89,40 @@ fn recipient_is_the_problem(status: &str) -> bool {
         // mailbox the receiver reports as disabled for good.
         "1.1" | "1.2" | "1.3" | "1.6" | "1.10" | "2.1"
     )
+}
+
+/// Phrases in which a receiver says, in its own words, that the mailbox is
+/// not there.
+///
+/// The enhanced status code is the primary signal and stays an allowlist.
+/// This exists because that code is not always the truth. Sendmail-derived
+/// servers answer a nonexistent mailbox with `553 5.3.0 ... No such user
+/// here` — filing a dead address under MAIL SYSTEM, a class where nothing
+/// may suppress and nothing should. Found against a real receiver, on a
+/// real address that would otherwise have been mailed forever.
+///
+/// Deliberately short and deliberately unambiguous. Every phrase names the
+/// RECIPIENT as missing, and none of them can be produced by a full
+/// mailbox, a policy rejection or a broken relay. "does not exist" is
+/// absent on purpose: a domain that does not exist says it too, and so
+/// does an account that is merely disabled.
+const MISSING_MAILBOX: [&str; 5] = [
+    "no such user",
+    "user unknown",
+    "recipient not found",
+    "mailbox not found",
+    "no mailbox here",
+];
+
+fn names_a_missing_mailbox(diagnostic: &str) -> bool {
+    // Folded headers arrive joined but not normalised, so the spacing a
+    // receiver used must not decide whether an address survives.
+    let flat = diagnostic
+        .to_ascii_lowercase()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    MISSING_MAILBOX.iter().any(|phrase| flat.contains(phrase))
 }
 
 /// Parse a raw DSN. Returns one [`Report`] per recipient block found.
@@ -297,6 +341,77 @@ Diagnostic-Code: X-Postfix; delivery time expired
             let r = one_report(status);
             assert!(r.should_suppress(), "{status} must suppress");
         }
+    }
+
+    /// The case that put this rule here, verbatim from production.
+    ///
+    /// Domeneshop runs a sendmail-derived server, which answers a
+    /// nonexistent mailbox with `553 5.3.0 ... No such user here`. The
+    /// code files it under MAIL SYSTEM, where nothing may suppress; only
+    /// the words say what actually happened. Without this the address is
+    /// mailed forever and the relay's reputation pays for it.
+    #[test]
+    fn a_dead_mailbox_suppresses_on_the_receivers_words() {
+        let raw = "X-Postfix-Queue-ID: B3F1716F856\n\
+                   Final-Recipient: rfc822; nobody@example.com\n\
+                   Action: failed\n\
+                   Status: 5.3.0\n\
+                   Diagnostic-Code: smtp; 553 5.3.0 <nobody@example.com>... \
+                   No such user here\n";
+        let r = &parse(raw)[0];
+        assert_eq!(r.status.as_deref(), Some("5.3.0"));
+        assert!(r.should_suppress(), "the words name a missing mailbox");
+    }
+
+    #[test]
+    fn the_wording_is_matched_whatever_the_case_and_spacing() {
+        for text in [
+            "550 USER UNKNOWN",
+            "550 Recipient  not   found",
+            "550 Mailbox not found",
+            "550 no mailbox here by that name",
+        ] {
+            let raw = format!(
+                "Final-Recipient: rfc822; nobody@example.com\n\
+                 Status: 5.0.0\n\
+                 Diagnostic-Code: smtp; {text}\n"
+            );
+            assert!(parse(&raw)[0].should_suppress(), "{text} must suppress");
+        }
+    }
+
+    /// A 5.3.0 that really is a mail-system failure must stay untouched:
+    /// the point of the phrase list is that it names the RECIPIENT, and a
+    /// full disk at the far end says nothing about who was written to.
+    #[test]
+    fn a_real_system_failure_still_never_suppresses() {
+        for text in [
+            "452 4.3.1 Insufficient system storage",
+            "550 5.3.0 Mail system rejected the message",
+            "550 5.7.1 Message rejected due to policy",
+            "550 5.2.2 Mailbox full",
+        ] {
+            let raw = format!(
+                "Final-Recipient: rfc822; nobody@example.com\n\
+                 Status: 5.3.0\n\
+                 Diagnostic-Code: smtp; {text}\n"
+            );
+            assert!(
+                !parse(&raw)[0].should_suppress(),
+                "{text} must not suppress"
+            );
+        }
+    }
+
+    /// The words never outrank permanence. A receiver that defers while
+    /// saying "user unknown" is contradicting itself, and the safe reading
+    /// of a contradiction keeps writing to the address.
+    #[test]
+    fn a_transient_failure_is_not_rescued_by_its_wording() {
+        let raw = "Final-Recipient: rfc822; nobody@example.com\n\
+                   Status: 4.2.0\n\
+                   Diagnostic-Code: smtp; 450 no such user, try later\n";
+        assert!(!parse(raw)[0].should_suppress());
     }
 
     /// Permanent, but not about the address: a full mailbox gets emptied,
