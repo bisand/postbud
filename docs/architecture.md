@@ -122,11 +122,27 @@ optimises the wrong hop.
 
 ## 6. Suppression semantics
 
-**Only a permanent failure suppresses.** The asymmetry is deliberate and
-runs through the whole codebase: a needless retry costs a connection, a
-wrong "permanent" costs an invoice and a customer who quietly stops hearing
-from you. A full mailbox is `4.2.2` and must never suppress — it is the most
-common way a naive suppression list starts silently dropping real mail.
+**Only a permanent failure about the recipient suppresses.** The asymmetry
+is deliberate and runs through the whole codebase: a needless retry costs a
+connection, a wrong "permanent" costs an invoice and a customer who quietly
+stops hearing from you. A full mailbox is `4.2.2` and must never suppress —
+it is the most common way a naive suppression list starts silently dropping
+real mail.
+
+Permanence alone is not the test, because a 5xx answers "will retrying
+help?" rather than "does this mailbox exist?". `5.7.x` is the security and
+policy class: a sending domain at DMARC `p=reject` whose SPF and DKIM both
+break earns one for every message it sends, each naming a recipient who is
+perfectly fine. Reading those as hard bounces would suppress every address
+mailed during an outage on postbud's own side of the wire — globally, for
+every tenant, recoverable only by a human lifting them one at a time.
+`should_suppress` is therefore an allowlist of the codes that name the
+address: `5.1.1`, `5.1.2`, `5.1.3`, `5.1.6`, `5.1.10` and `5.2.1`.
+`5.1.7`/`5.1.8` are excluded because they name the *sender's* address,
+`5.2.3` because an oversized message proves the mailbox works, and `5.0.0`
+because a code carrying no information must not be read as bad news.
+Everything else is still permanent, still recorded, still never retried —
+it just costs nobody their mail.
 
 **Bounce-driven suppressions are global; manual ones are per-tenant.** A
 hard bounce is a fact about the mailbox, not about who was writing to it, so

@@ -29,11 +29,56 @@ pub struct Report {
 }
 
 impl Report {
-    /// Only a permanent failure may suppress an address. Anything else —
-    /// including a bounce we could not classify — leaves the address alone.
+    /// Only a permanent failure *about this recipient* may suppress an
+    /// address. Anything else — including a bounce we could not classify —
+    /// leaves the address alone.
+    ///
+    /// Permanence alone is not enough, and reading it as enough is the
+    /// expensive mistake here. A `5.7.1` is permanent in the only sense
+    /// retrying cares about: the receiver will refuse it again tomorrow.
+    /// But it says the receiver rejected the MESSAGE — for DMARC policy,
+    /// for our reputation, for its own rules — and says nothing at all
+    /// about whether the mailbox exists. A sending domain at `p=reject`
+    /// whose SPF and DKIM both break earns one of these for every message
+    /// it sends, each one naming a recipient who is perfectly fine.
+    /// Suppressing on that would take every address mailed during an
+    /// outage on OUR side out of service, globally, for every tenant, and
+    /// only a human lifting them one at a time puts it back.
     pub fn should_suppress(&self) -> bool {
         self.classification == Classification::Permanent
+            && self.status.as_deref().is_some_and(recipient_is_the_problem)
     }
+}
+
+/// Does an RFC 3463 enhanced status blame the recipient's address?
+///
+/// Deliberately an allowlist: a code we do not recognise must not cost an
+/// address. The subject sub-code carries the signal — `.1` is addressing
+/// and `.2` is the mailbox, while `.3` (system), `.4` (network), `.5`
+/// (protocol), `.6` (content) and `.7` (security/policy) all describe
+/// something that happened around the message rather than a mailbox that
+/// is gone. Within the two that can qualify, the exclusions matter as much
+/// as the rule:
+///
+/// - `5.1.7` and `5.1.8` name the SENDER's address, not the recipient's.
+/// - `5.2.2` is a full mailbox: the permanent spelling of the `4.2.2` that
+///   must never suppress. Full mailboxes get emptied.
+/// - `5.2.3` is a message too large for the mailbox, which is evidence the
+///   mailbox is there and working.
+/// - `5.0.0` and `5.1.0` mean "something else went wrong". A code carrying
+///   no information must not be read as bad news about the address.
+fn recipient_is_the_problem(status: &str) -> bool {
+    let Some((_class, subject_and_detail)) = status.trim().split_once('.') else {
+        return false;
+    };
+    matches!(
+        subject_and_detail,
+        // No such mailbox; no such domain; an address that cannot be
+        // parsed; a mailbox moved away leaving no forwarding; a domain
+        // publishing a null MX to say it receives no mail at all; and a
+        // mailbox the receiver reports as disabled for good.
+        "1.1" | "1.2" | "1.3" | "1.6" | "1.10" | "2.1"
+    )
 }
 
 /// Parse a raw DSN. Returns one [`Report`] per recipient block found.
@@ -214,6 +259,59 @@ Diagnostic-Code: X-Postfix; delivery time expired
         let reports = parse(raw);
         assert_eq!(reports[0].classification, Classification::Transient);
         assert!(!reports[0].should_suppress());
+    }
+
+    /// One failed report carrying `status`, for the tables below.
+    fn one_report(status: &str) -> Report {
+        let raw = format!(
+            "X-Postfix-Queue-ID: TESTQ\n\
+             Final-Recipient: rfc822; recipient@example.com\n\
+             Action: failed\n\
+             Status: {status}\n"
+        );
+        parse(&raw).into_iter().next().expect("one report")
+    }
+
+    /// A policy rejection is permanent and still must not suppress.
+    ///
+    /// This is the shape of a DMARC `p=reject` refusal — including
+    /// Google's `5.7.26` for a message that aligned on neither SPF nor
+    /// DKIM. Every one of these is caused by our own authentication
+    /// breaking, and every one of them names a recipient who is fine.
+    /// Suppressing here empties a working address list over an outage the
+    /// recipient had no part in.
+    #[test]
+    fn a_policy_rejection_never_suppresses() {
+        for status in ["5.7.0", "5.7.1", "5.7.9", "5.7.26"] {
+            let r = one_report(status);
+            assert_eq!(r.classification, Classification::Permanent);
+            assert!(!r.should_suppress(), "{status} must not suppress");
+        }
+    }
+
+    /// The codes that really do mean the mailbox is gone keep suppressing.
+    /// Narrowing the rule must not quietly disable the feature.
+    #[test]
+    fn a_dead_address_still_suppresses() {
+        for status in ["5.1.1", "5.1.2", "5.1.3", "5.1.6", "5.1.10", "5.2.1"] {
+            let r = one_report(status);
+            assert!(r.should_suppress(), "{status} must suppress");
+        }
+    }
+
+    /// Permanent, but not about the address: a full mailbox gets emptied,
+    /// an oversized message gets sent again smaller, a broken network gets
+    /// fixed, and a bare `5.0.0` tells us nothing whatsoever.
+    #[test]
+    fn a_permanent_failure_that_is_not_the_address_never_suppresses() {
+        for status in [
+            "5.0.0", "5.1.0", "5.1.7", "5.1.8", "5.2.2", "5.2.3", "5.3.0", "5.4.4", "5.5.2",
+            "5.6.1",
+        ] {
+            let r = one_report(status);
+            assert_eq!(r.classification, Classification::Permanent);
+            assert!(!r.should_suppress(), "{status} must not suppress");
+        }
     }
 
     #[test]

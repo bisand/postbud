@@ -27,7 +27,9 @@ pub enum Classification {
     Accepted,
     /// 4xx, a connection failure, or a timeout. Try again later.
     Transient,
-    /// 5xx. Never try again; the address is suppressed.
+    /// 5xx. Never try again. Whether the address is also suppressed is a
+    /// narrower question than this enum answers — see
+    /// [`dsn::Report::should_suppress`].
     Permanent,
     /// A bounce we could not read. Never acted on automatically.
     Unknown,

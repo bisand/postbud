@@ -51,10 +51,15 @@ reputation checklist in [docs/dns.md](docs/dns.md).
   message) → the same id in the bounce's `X-Postfix-Queue-ID`. That header
   carries the ORIGINAL message's queue id, not the bounce's — which is why
   it works as a join key. The response format is pinned by a test.
-- **Only permanent failures suppress.** A needless retry costs a
-  connection; a wrong "permanent" costs an invoice. `4.2.2` (mailbox full)
-  must never suppress. Bounce-driven suppressions are global, manual ones
-  per-tenant, and lifting is a soft delete.
+- **Only permanent failures about the RECIPIENT suppress.** A needless
+  retry costs a connection; a wrong "permanent" costs an invoice. `4.2.2`
+  (mailbox full) must never suppress, and neither may a permanent code
+  that blames anything but the address: `5.7.x` is policy -- a domain at
+  DMARC `p=reject` with broken auth earns one per message, each naming a
+  perfectly healthy recipient. `should_suppress` is an allowlist of the
+  addressing codes and the one seam that decides. Bounce-driven
+  suppressions are global, manual ones per-tenant, and lifting is a soft
+  delete.
 - **The retry window is ~49 hours**, against the few minutes of the in-app
   loops this replaces. That gap is the reason this service exists;
   `retry_window_survives_an_overnight_outage` fails if it is shortened.
