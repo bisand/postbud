@@ -15,6 +15,13 @@
 # Every address NOT listed here is rejected at RCPT time, before any content
 # is accepted. That is what keeps this host free of a filtering stack.
 
+# bounces@ is not decoration: postbud sets it as the SMTP envelope sender
+# (BOUNCE_MAILBOX) on every message it hands over, and a DSN comes back to
+# the envelope sender rather than to the From: header. Leave this out and
+# bounces arrive at the From: address instead -- which is aliased to a
+# person below, so they land in somebody's inbox and the suppression list
+# is never fed. Nothing breaks visibly; the mail simply teaches postbud
+# nothing.
 bounces@example.com      postbud-bounce:
 abuse@example.com        admin@example.com
 postmaster@example.com   admin@example.com

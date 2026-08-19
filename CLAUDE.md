@@ -51,6 +51,15 @@ reputation checklist in [docs/dns.md](docs/dns.md).
   message) → the same id in the bounce's `X-Postfix-Queue-ID`. That header
   carries the ORIGINAL message's queue id, not the bounce's — which is why
   it works as a join key. The response format is pinned by a test.
+- **The envelope sender is `bounces@<sending domain>`, not the `From:`
+  header.** A DSN returns to the envelope sender, and a mail library
+  derives it from `From:` unless told otherwise -- but `From:` is the
+  address a person replies to, so it is aliased to a human mailbox, and
+  every bounce then lands there instead of the ingest pipe. Nothing fails
+  visibly: the mail arrives, to the wrong reader, and the suppression list
+  learns nothing. Same domain as the sender, so SPF alignment does not
+  move. `BOUNCE_MAILBOX` names the local part; empty restores the old
+  behaviour for a relay that cannot accept the address.
 - **Only permanent failures about the RECIPIENT suppress.** A needless
   retry costs a connection; a wrong "permanent" costs an invoice. `4.2.2`
   (mailbox full) must never suppress, and neither may a permanent code

@@ -40,6 +40,34 @@ pub fn domain(address: &str) -> Option<String> {
         .filter(|d| !d.is_empty())
 }
 
+/// The envelope sender to hand the relay for a message from `mail_from`.
+///
+/// A DSN comes back to the ENVELOPE sender, never to the `From:` header,
+/// and a mail library will derive the envelope from `From:` unless it is
+/// told otherwise. That default is quietly wrong for us: the `From:`
+/// address is the one a person replies to, so it is usually aliased to a
+/// human mailbox, and every bounce then lands in somebody's inbox instead
+/// of the ingest pipe. Nothing breaks visibly. The mail still arrives, to
+/// the wrong reader, and the suppression list simply never learns
+/// anything.
+///
+/// The mailbox keeps the SENDER's domain on purpose. SPF is evaluated
+/// against the envelope domain, so an envelope in the same domain leaves
+/// alignment exactly as it was; one shared bounce domain across tenants
+/// would have to be authorized and aligned on its own, and would put every
+/// tenant's return path behind one name.
+///
+/// `None` when no sensible address can be formed — a caller that asked for
+/// this and got nothing has a bug to surface, not a default to fall back
+/// on.
+pub fn bounce_sender(mail_from: &str, mailbox: &str) -> Option<String> {
+    let mailbox = mailbox.trim();
+    if mailbox.is_empty() || mailbox.chars().any(|c| c == '@' || c.is_whitespace()) {
+        return None;
+    }
+    Some(format!("{mailbox}@{}", domain(mail_from)?))
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AddressError {
     Empty,
@@ -96,5 +124,51 @@ mod tests {
             "\"a@b\"@example.no"
         );
         assert_eq!(domain("\"a@b\"@example.no").as_deref(), Some("example.no"));
+    }
+}
+
+#[cfg(test)]
+mod bounce_tests {
+    use super::*;
+
+    /// The domain must follow the sender, because SPF is checked against
+    /// the envelope domain and alignment must not move.
+    #[test]
+    fn the_bounce_sender_keeps_the_senders_domain() {
+        assert_eq!(
+            bounce_sender("no-reply@mail.example.com", "bounces").as_deref(),
+            Some("bounces@mail.example.com")
+        );
+        assert_eq!(
+            bounce_sender("Invoices@Example.COM", "bounces").as_deref(),
+            Some("bounces@example.com")
+        );
+    }
+
+    #[test]
+    fn a_mailbox_may_be_named_anything_sane() {
+        assert_eq!(
+            bounce_sender("x@example.com", "  return-path  ").as_deref(),
+            Some("return-path@example.com")
+        );
+    }
+
+    /// Refused rather than mangled: a mailbox carrying its own `@` would
+    /// build a nonsense address, and an empty one would build `@domain`.
+    #[test]
+    fn a_mailbox_that_is_not_a_local_part_yields_nothing() {
+        assert_eq!(bounce_sender("x@example.com", ""), None);
+        assert_eq!(bounce_sender("x@example.com", "   "), None);
+        assert_eq!(
+            bounce_sender("x@example.com", "bounces@other.example"),
+            None
+        );
+        assert_eq!(bounce_sender("x@example.com", "two words"), None);
+    }
+
+    #[test]
+    fn a_sender_without_a_domain_yields_nothing() {
+        assert_eq!(bounce_sender("not-an-address", "bounces"), None);
+        assert_eq!(bounce_sender("", "bounces"), None);
     }
 }

@@ -27,3 +27,4 @@ webpki-roots.workspace = true
 
 [dev-dependencies]
 base64.workspace = true
+uuid.workspace = true

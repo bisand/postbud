@@ -15,11 +15,13 @@ pub mod queuereport;
 pub mod worker;
 
 use anyhow::{Context, anyhow};
+use lettre::address::Envelope;
 use lettre::message::{Attachment, MultiPart, SinglePart, header};
 use lettre::transport::smtp::PoolConfig;
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::transport::smtp::client::{Tls, TlsParameters};
-use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
+use lettre::{Address, AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
+use postbud_core::address;
 use postbud_db::message::Claimed;
 
 /// What the relay said about one handoff.
@@ -36,6 +38,10 @@ pub enum Outcome {
 
 pub struct Relay {
     transport: AsyncSmtpTransport<Tokio1Executor>,
+    /// Local part of the envelope sender, per sending domain. `None`
+    /// leaves the envelope derived from `From:`, which is where bounces
+    /// stop reaching us -- see [`Relay::envelope_for`].
+    bounce_mailbox: Option<String>,
 }
 
 impl Relay {
@@ -88,8 +94,20 @@ impl Relay {
             builder = builder.credentials(Credentials::new(user, password));
         }
 
+        // `bounces` is what docs/postfix documents and what the RCPT
+        // allowlist is written around. Set BOUNCE_MAILBOX empty to keep
+        // the old behaviour of letting the envelope follow `From:` --
+        // the escape hatch for a relay that does not accept a bounces@
+        // address, where an undeliverable envelope sender could itself
+        // cost delivery at a receiver that verifies it.
+        let bounce_mailbox = std::env::var("BOUNCE_MAILBOX")
+            .unwrap_or_else(|_| "bounces".into())
+            .trim()
+            .to_string();
+
         Ok(Relay {
             transport: builder.build(),
+            bounce_mailbox: (!bounce_mailbox.is_empty()).then_some(bounce_mailbox),
         })
     }
 
@@ -108,7 +126,26 @@ impl Relay {
             }
         };
 
-        match self.transport.send(message).await {
+        // Sent with an EXPLICIT envelope, not the one lettre would derive
+        // from `From:`. The whole bounce path hangs on this: a DSN is
+        // returned to the envelope sender, and the `From:` address is
+        // the one aliased to a human so replies reach somebody.
+        let sent = match self.envelope_for(claimed) {
+            Ok(Some(envelope)) => {
+                self.transport
+                    .send_raw(&envelope, &message.formatted())
+                    .await
+            }
+            Ok(None) => self.transport.send(message).await,
+            Err(err) => {
+                return Outcome::Permanent {
+                    code: None,
+                    detail: format!("could not build envelope: {err:#}"),
+                };
+            }
+        };
+
+        match sent {
             Ok(response) => Outcome::Accepted {
                 queue_id: queue_id_from(&response.message().collect::<Vec<_>>().join(" ")),
             },
@@ -131,6 +168,42 @@ impl Relay {
                 }
             }
         }
+    }
+}
+
+impl Relay {
+    /// The envelope to hand the relay, or `None` to let it follow `From:`.
+    ///
+    /// Failing loudly rather than falling back is the point. A silent
+    /// fallback here would restore exactly the bug this exists to fix,
+    /// and it would restore it invisibly: mail keeps flowing, bounces
+    /// keep vanishing into a human's inbox, and the suppression list
+    /// keeps learning nothing.
+    fn envelope_for(&self, claimed: &Claimed) -> anyhow::Result<Option<Envelope>> {
+        let Some(mailbox) = &self.bounce_mailbox else {
+            return Ok(None);
+        };
+        let sender = address::bounce_sender(&claimed.mail_from, mailbox).ok_or_else(|| {
+            anyhow!(
+                "no bounce sender for '{}' with mailbox '{mailbox}'",
+                claimed.mail_from
+            )
+        })?;
+        let envelope = Envelope::new(
+            Some(
+                sender
+                    .parse::<Address>()
+                    .with_context(|| format!("parsing bounce sender {sender}"))?,
+            ),
+            vec![
+                claimed
+                    .rcpt_to
+                    .parse::<Address>()
+                    .with_context(|| format!("parsing recipient {}", claimed.rcpt_to))?,
+            ],
+        )
+        .context("building envelope")?;
+        Ok(Some(envelope))
     }
 }
 
