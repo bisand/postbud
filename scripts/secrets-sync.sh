@@ -91,7 +91,14 @@ fetch_cluster_into() {
     # error -- that is exactly the state `upload` starts from when
     # creating one. Without the `|| true`, pipefail turns a first-time
     # upload into a silent exit.
-    kubectl -n "$NS" get secret "$secret" -o go-template='{{range $k,$v := .data}}{{$k}} {{$v}}{{"\n"}}{{end}}' 2>/dev/null || true \
+    # The braces are load-bearing. `A || true | while ...` parses as
+    # `A || (true | while ...)`, because `|` binds tighter than `||` --
+    # so on the happy path, where kubectl SUCCEEDS, the `||` short-circuits
+    # and the decode loop never runs at all. The keys land on stdout
+    # instead of in files, every diff sees an empty cluster, and every
+    # key reads as new. Grouping puts the fallback inside the pipeline's
+    # left-hand side, where it was meant to be.
+    { kubectl -n "$NS" get secret "$secret" -o go-template='{{range $k,$v := .data}}{{$k}} {{$v}}{{"\n"}}{{end}}' 2>/dev/null || true; } \
     | while read -r key b64; do
         [ -n "${key:-}" ] || continue
         printf '%s' "$b64" | openssl base64 -d -A > "$into/$key"
