@@ -204,8 +204,12 @@ async fn main() -> Result<()> {
             let pool = pool().await?;
             let outcome = postbud_relay::dmarc::poll_once(&pool, &config).await?;
             println!(
-                "dmarc fetch: {} examined, {} stored, {} duplicate, {} unreadable",
-                outcome.examined, outcome.stored, outcome.duplicates, outcome.unreadable
+                "dmarc fetch: {} examined, {} stored, {} duplicate, {} not reports, {} unreadable",
+                outcome.examined,
+                outcome.stored,
+                outcome.duplicates,
+                outcome.ignored,
+                outcome.unreadable
             );
         }
 

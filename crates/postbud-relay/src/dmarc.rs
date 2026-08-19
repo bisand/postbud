@@ -41,6 +41,9 @@ pub struct Config {
     pub mailbox: String,
     /// Where they go once stored.
     pub archive: String,
+    /// Where the ones that could not be read go. Defaults to the archive:
+    /// separating them is worth a folder only if somebody intends to look.
+    pub failures: String,
     pub interval: Duration,
 }
 
@@ -77,6 +80,10 @@ impl Config {
             port: parsed("DMARC_EMAIL_PORT", 993)?,
             mailbox: optional("DMARC_EMAIL_MAILBOX", "INBOX"),
             archive: optional("DMARC_EMAIL_ARCHIVE", "Archive"),
+            failures: optional(
+                "DMARC_EMAIL_FAILURES",
+                &optional("DMARC_EMAIL_ARCHIVE", "Archive"),
+            ),
             interval: Duration::from_secs(parsed("DMARC_EMAIL_INTERVAL", 3600)?),
             host,
         }))
@@ -107,6 +114,13 @@ pub struct Outcome {
     pub examined: usize,
     pub stored: usize,
     pub duplicates: usize,
+    /// Messages carrying nothing report-shaped. Counted apart from
+    /// `unreadable` because they are not a problem: a reports mailbox is
+    /// still a mailbox, and people write to it. Calling an ordinary email
+    /// a failure trains an operator to ignore the number that matters.
+    pub ignored: usize,
+    /// Messages that did carry something report-shaped which would not
+    /// parse. This is the number worth looking at.
     pub unreadable: usize,
 }
 
@@ -131,8 +145,12 @@ pub async fn run(pool: PgPool, config: Config) {
         match poll_once(&pool, &config).await {
             Ok(outcome) if outcome.quiet() => {}
             Ok(outcome) => println!(
-                "dmarc: {} examined, {} stored, {} duplicate, {} unreadable",
-                outcome.examined, outcome.stored, outcome.duplicates, outcome.unreadable
+                "dmarc: {} examined, {} stored, {} duplicate, {} not reports, {} unreadable",
+                outcome.examined,
+                outcome.stored,
+                outcome.duplicates,
+                outcome.ignored,
+                outcome.unreadable
             ),
             Err(err) => eprintln!("dmarc poll failed: {err:#}"),
         }
@@ -156,18 +174,31 @@ async fn drain_mailbox(
     config: &Config,
     session: &mut Session,
 ) -> anyhow::Result<Outcome> {
+    // Both destinations before the mailbox is selected, because a move
+    // into a folder that does not exist fails, and then nothing ever
+    // leaves the inbox. CREATE on an existing folder is an error every
+    // server words differently, so it is ignored rather than parsed.
+    let _ = session.create(&config.archive).await;
+    if config.failures != config.archive {
+        let _ = session.create(&config.failures).await;
+    }
+
     session
         .select(&config.mailbox)
         .await
         .with_context(|| format!("selecting {}", config.mailbox))?;
 
-    // UNSEEN rather than ALL: a report that could not be parsed is marked
-    // read and left where it is, so it stays visible to a human without
-    // being retried into the log every hour for ever.
+    // ALL, not UNSEEN. The obvious choice is to fetch only unread mail and
+    // let the read flag mark what has been handled -- but this mailbox
+    // belongs to a person as much as to postbud, and somebody opening it
+    // in a mail client would then silently starve the poller of every
+    // report they had looked at. What a message has been READ is not what
+    // postbud needs to know. Leaving the inbox is, which is why every
+    // message is moved out below whatever its fate.
     let mut uids: Vec<u32> = session
-        .uid_search("UNSEEN")
+        .uid_search("ALL")
         .await
-        .context("searching for unread reports")?
+        .context("searching for reports")?
         .into_iter()
         .collect();
     uids.sort_unstable();
@@ -179,30 +210,27 @@ async fn drain_mailbox(
         // One message at a time. A single unreadable report must not take
         // the rest of the batch with it.
         match handle_one(pool, session, uid).await {
-            Ok(stored) => {
-                if stored {
-                    outcome.stored += 1;
-                } else {
-                    outcome.duplicates += 1;
+            Ok(handled) => {
+                match handled {
+                    Handled::Stored => outcome.stored += 1,
+                    Handled::Duplicate => outcome.duplicates += 1,
+                    Handled::NotAReport => outcome.ignored += 1,
                 }
                 if let Err(err) = archive(session, uid, &config.archive).await {
-                    // Stored but not moved -- usually an archive folder
-                    // that does not exist, or is called something else on
-                    // this server. Marking it read instead is what stops
-                    // an hourly re-fetch of a report already held: the
-                    // dedupe key means nothing would be stored twice, but
-                    // "harmless forever" is still forever.
+                    // Left where it is, and picked up again next pass. The
+                    // dedupe key means nothing is stored twice, so this
+                    // costs a fetch and a log line rather than data.
                     eprintln!("dmarc: uid {uid} stored but not archived: {err:#}");
-                    if let Err(err) = mark_seen(session, uid).await {
-                        eprintln!("dmarc: uid {uid} could not be marked read: {err:#}");
-                    }
                 }
             }
             Err(err) => {
                 outcome.unreadable += 1;
+                // Loud, and kept. The message is moved rather than deleted,
+                // so the evidence survives even though nothing could be
+                // parsed out of it -- an unreadable report is a bug report.
                 eprintln!("dmarc: uid {uid} unreadable: {err:#}");
-                if let Err(err) = mark_seen(session, uid).await {
-                    eprintln!("dmarc: uid {uid} could not be marked read: {err:#}");
+                if let Err(err) = archive(session, uid, &config.failures).await {
+                    eprintln!("dmarc: uid {uid} could not be set aside: {err:#}");
                 }
             }
         }
@@ -210,9 +238,17 @@ async fn drain_mailbox(
     Ok(outcome)
 }
 
-/// Fetch one message and store whatever reports it carried. Returns
-/// whether anything new was stored.
-async fn handle_one(pool: &PgPool, session: &mut Session, uid: u32) -> anyhow::Result<bool> {
+/// What one message turned out to be.
+enum Handled {
+    Stored,
+    /// Held already, which is routine: reporters redeliver.
+    Duplicate,
+    /// Nothing in it was report-shaped.
+    NotAReport,
+}
+
+/// Fetch one message and store whatever reports it carried.
+async fn handle_one(pool: &PgPool, session: &mut Session, uid: u32) -> anyhow::Result<Handled> {
     let raw = {
         let mut fetches = session
             .uid_fetch(uid.to_string(), "RFC822")
@@ -231,10 +267,11 @@ async fn handle_one(pool: &PgPool, session: &mut Session, uid: u32) -> anyhow::R
 
     let candidates = candidates(&raw);
     if candidates.is_empty() {
-        return Err(anyhow!("no report attachment in the message"));
+        return Ok(Handled::NotAReport);
     }
 
     let mut stored = false;
+    let mut seen_report = false;
     let mut failures = Vec::new();
     for candidate in candidates {
         let documents = match dmarc::extract(&candidate) {
@@ -247,6 +284,7 @@ async fn handle_one(pool: &PgPool, session: &mut Session, uid: u32) -> anyhow::R
         for document in documents {
             match dmarc::parse(&document) {
                 Ok(report) => {
+                    seen_report = true;
                     let text = String::from_utf8_lossy(&document);
                     if postbud_db::dmarc::store(pool, &report, &text).await? {
                         stored = true;
@@ -257,14 +295,19 @@ async fn handle_one(pool: &PgPool, session: &mut Session, uid: u32) -> anyhow::R
         }
     }
 
-    // Nothing usable AND something went wrong: report the first reason
-    // rather than a bare "no reports", which says nothing an operator can
-    // act on. A message whose every part simply was not a report reaches
-    // here with no failures and is treated the same way.
-    if !stored && !failures.is_empty() {
+    // Something looked like a report and would not parse. Say why, using
+    // the first reason rather than a bare count -- that string is the
+    // whole of what an operator has to go on.
+    if !seen_report && !failures.is_empty() {
         return Err(anyhow!("{}", failures.remove(0)));
     }
-    Ok(stored)
+    Ok(match (stored, seen_report) {
+        (true, _) => Handled::Stored,
+        (false, true) => Handled::Duplicate,
+        // Parts that were binary but not reports: an image in a
+        // signature, a vcard. Nothing to report and nothing wrong.
+        (false, false) => Handled::NotAReport,
+    })
 }
 
 /// Every part of the message that might be a report.
@@ -322,15 +365,6 @@ async fn archive(session: &mut Session, uid: u32, mailbox: &str) -> anyhow::Resu
     let expunged = session.expunge().await.context("expunging")?;
     futures::pin_mut!(expunged);
     while expunged.next().await.is_some() {}
-    Ok(())
-}
-
-async fn mark_seen(session: &mut Session, uid: u32) -> anyhow::Result<()> {
-    let mut updates = session
-        .uid_store(uid.to_string(), "+FLAGS (\\Seen)")
-        .await
-        .context("flagging as read")?;
-    while updates.next().await.is_some() {}
     Ok(())
 }
 

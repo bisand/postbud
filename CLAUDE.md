@@ -126,9 +126,14 @@ reputation checklist in [docs/dns.md](docs/dns.md).
   `_USERNAME`, `_PASSWORD`; off entirely when unset, a startup error when
   half set). That does not revisit "postbud never delivers mail itself"
   and is not the inbound mail the README lists as unbuilt -- no port is
-  listened on and no MX is resolved. Stored reports are MOVED to
-  `DMARC_EMAIL_ARCHIVE`; anything unreadable is marked seen and left in
-  place, visible without being retried for ever. `dmarc-import` reads
+  listened on and no MX is resolved. Every message in the mailbox is
+  examined and then MOVED to `DMARC_EMAIL_ARCHIVE` (unreadable ones to
+  `DMARC_EMAIL_FAILURES`, which defaults to the same folder) -- leaving
+  the inbox is what marks a message handled, NOT the read flag, because
+  the mailbox belongs to a person too and somebody opening it in a mail
+  client would otherwise starve the poller of every report they had
+  looked at. Mail that is not a report is counted apart from mail that
+  would not parse: only the second is a problem. `dmarc-import` reads
   files for backfill, `dmarc-fetch` makes one pass by hand. The admin
   page is not built yet.
 - **Applied migrations are never edited** — sqlx checksums them. Their
