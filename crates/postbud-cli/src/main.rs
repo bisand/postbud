@@ -52,6 +52,12 @@ enum Command {
         #[arg(required = true)]
         paths: Vec<std::path::PathBuf>,
     },
+    /// Read the DMARC report mailbox once and exit.
+    ///
+    /// The same pass the worker makes on a timer. Separate because
+    /// checking that a mailbox is reachable should not mean starting a
+    /// delivery worker and waiting an hour to find out.
+    DmarcFetch,
     /// Blank message bodies that have outlived their delivery.
     Purge {
         /// Override BODY_RETENTION_DAYS.
@@ -189,6 +195,18 @@ async fn main() -> Result<()> {
                     row.domain, row.reports, row.messages, rate
                 );
             }
+        }
+
+        Command::DmarcFetch => {
+            let Some(config) = postbud_relay::dmarc::Config::from_env()? else {
+                anyhow::bail!("DMARC_EMAIL_IMAP is not set; nothing to read");
+            };
+            let pool = pool().await?;
+            let outcome = postbud_relay::dmarc::poll_once(&pool, &config).await?;
+            println!(
+                "dmarc fetch: {} examined, {} stored, {} duplicate, {} unreadable",
+                outcome.examined, outcome.stored, outcome.duplicates, outcome.unreadable
+            );
         }
 
         Command::Purge { days } => {

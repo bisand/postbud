@@ -121,8 +121,16 @@ reputation checklist in [docs/dns.md](docs/dns.md).
   `(org_name, report_id)` because reporters redeliver, and keeps the raw
   XML so a parser fix can be replayed over history. Nothing parsed here
   may drive suppression, domain status, or any other automatic action.
-  Today only `dmarc-import` reads files; the IMAP poller and the admin
-  page are not built yet.
+  The reports are FETCHED, not received: the worker opens one outbound
+  IMAP connection to one configured mailbox (`DMARC_EMAIL_IMAP`,
+  `_USERNAME`, `_PASSWORD`; off entirely when unset, a startup error when
+  half set). That does not revisit "postbud never delivers mail itself"
+  and is not the inbound mail the README lists as unbuilt -- no port is
+  listened on and no MX is resolved. Stored reports are MOVED to
+  `DMARC_EMAIL_ARCHIVE`; anything unreadable is marked seen and left in
+  place, visible without being retried for ever. `dmarc-import` reads
+  files for backfill, `dmarc-fetch` makes one pass by hand. The admin
+  page is not built yet.
 - **Applied migrations are never edited** — sqlx checksums them. Their
   comments are part of the record, even where newer policy (like this
   file's genericity rule) would phrase them differently today.

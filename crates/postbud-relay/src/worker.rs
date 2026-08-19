@@ -84,6 +84,19 @@ pub async fn run(pool: PgPool, relay: Relay, config: Config) -> anyhow::Result<(
     // duplicate harmlessly (insert-only history, identical answers).
     tokio::spawn(crate::dnscheck::run(pool.clone()));
 
+    // The DMARC mailbox rides here for the same reason, and is off unless
+    // configured. Half configured fails startup rather than skipping
+    // quietly, so a deploy that forgot the password is found now instead
+    // of from an empty reports page in three months.
+    //
+    // With several workers the pollers overlap harmlessly: they race for
+    // the same messages, the loser stores nothing because reports dedupe
+    // on (org_name, report_id), and whoever archives second says so and
+    // moves on. Wasteful rather than wrong -- one worker is plenty.
+    if let Some(dmarc) = crate::dmarc::Config::from_env()? {
+        tokio::spawn(crate::dmarc::run(pool.clone(), dmarc));
+    }
+
     let relay = Arc::new(relay);
     let wake = spawn_wake_listener(&pool);
 

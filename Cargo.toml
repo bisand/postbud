@@ -28,11 +28,20 @@ postbud-db = { path = "crates/postbud-db" }
 postbud-relay = { path = "crates/postbud-relay" }
 
 anyhow = "1"
+# The DMARC report mailbox. async-imap leaves the transport to the caller,
+# so the TLS stream is built here from rustls and webpki-roots -- the same
+# choice reqwest and lettre already make, and the reason the scratch image
+# needs no CA bundle. ring rather than aws-lc-rs: it is already in the tree
+# and needs no C toolchain in the alpine builder.
+async-imap = { version = "0.11", default-features = false, features = [
+    "runtime-tokio",
+] }
 axum = "0.8"
 base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
 dotenvy = "0.15"
+futures = "0.3"
 hex = "0.4"
 # DMARC aggregate reports: XML, usually inside a gzip or zip attachment.
 # Unwrapping and parsing are byte transforms rather than I/O, so they sit
@@ -75,6 +84,10 @@ lettre = { version = "0.11", default-features = false, features = [
     # Postfix's per-client connection limits for no reason.
     "pool",
 ] }
+# Pulls the report attachment out of the message that carried it. Reports
+# arrive as gzip, zip or bare XML, and the part's declared content type is
+# not reliable -- postbud_core::dmarc sniffs the bytes instead.
+mail-parser = "0.11"
 rand = "0.8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -96,4 +109,12 @@ tokio = { version = "1", features = ["full"] }
 tower-http = { version = "0.7", default-features = false, features = [
     "catch-panic",
 ] }
+tokio-rustls = { version = "0.26", default-features = false, features = [
+    "ring",
+    "tls12",
+    "logging",
+] }
 uuid = { version = "1", features = ["v4", "v7", "serde"] }
+# Pinned to the copy reqwest and lettre already pull, so the binary
+# carries one root store rather than two.
+webpki-roots = "0.26"
