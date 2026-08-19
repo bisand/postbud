@@ -53,6 +53,14 @@ export const icons = {
       '<ellipse cx="12" cy="12" rx="3.8" ry="8.5"/>' +
       '<path d="M4 9.5h16M4 14.5h16"/>',
   ),
+  // A report with a tick: what a receiver concluded about our mail.
+  // Deliberately not a shield -- suppressions already owns that shape,
+  // and these are somebody else's findings rather than a defence.
+  dmarc: svg(
+    '<path d="M6.5 3.5h7L18 8v12a.5.5 0 0 1-.5.5h-11a.5.5 0 0 1-.5-.5V4a.5.5 0 0 1 .5-.5z"/>' +
+      '<path d="M13.5 3.5V8H18"/>' +
+      '<path d="M8.75 14.25l2.25 2.25 4.25-4.75"/>',
+  ),
   // Person with a key: user administration.
   users: svg(
     '<circle cx="10" cy="8" r="3.2"/>' +
