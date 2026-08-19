@@ -23,3 +23,11 @@ ui/admin/node_modules/
 # Local copies of cluster Secrets. Never committable -- see
 # scripts/secrets-sync.sh, which refuses to write anywhere not ignored.
 secrets/
+
+# Local copies of cluster ConfigMaps -- the relay's Postfix config, which
+# names hosts and domains and so cannot live in a repo that is public and
+# deliberately generic. Kept OUT of secrets/ on purpose: a bulk
+# `secrets-sync.sh upload` treats every entry there as a Secret name.
+# Kubernetes does not version a ConfigMap, so a copy taken before an edit
+# is the only way back.
+cluster-config/
