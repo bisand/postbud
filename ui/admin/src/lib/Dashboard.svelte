@@ -20,6 +20,20 @@
       : 1,
   );
 
+  // "inconclusive" is deliberately not styled as a problem OR as success:
+  // it is the honest middle, and colouring it either way would be a claim
+  // the data does not support.
+  const signalBadge = {
+    healthy: "badge-success",
+    inconclusive: "badge-ghost",
+    silent: "badge-warning",
+  };
+  const signalLabel = {
+    healthy: "carrying",
+    inconclusive: "not enough evidence",
+    silent: "silent",
+  };
+
   function statusOf(name) {
     return data?.by_status.find((s) => s.status === name);
   }
@@ -73,6 +87,43 @@
         Bounces tab.
       </div>
     {/if}
+
+    <!-- Shown whatever the verdict, including "cannot tell". A check that
+         only appears when it is unhappy leaves an operator unable to
+         distinguish "healthy" from "not running". -->
+    <div
+      class="card bg-base-100 border {data.bounce_path.state === 'silent' || data.dmarc_path.state === 'silent'
+        ? 'border-warning/50'
+        : 'border-base-300'}"
+    >
+      <div class="card-body gap-3">
+        <div>
+          <h2 class="card-title text-base">Is anything coming back?</h2>
+          <p class="text-xs opacity-60">
+            Both of these fail by going quiet rather than by erroring, so an empty
+            table looks exactly like a working one. "Not enough evidence" is a real
+            answer here, not a polite way of saying fine.
+          </p>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="table table-sm">
+            <tbody>
+              {#each [["Bounces", data.bounce_path], ["DMARC reports", data.dmarc_path]] as [label, signal]}
+                <tr>
+                  <td class="align-top whitespace-nowrap">{label}</td>
+                  <td class="align-top">
+                    <span class="badge badge-sm {signalBadge[signal.state] ?? ''}">
+                      {signalLabel[signal.state] ?? signal.state}
+                    </span>
+                  </td>
+                  <td class="align-top text-xs opacity-70">{signal.detail}</td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
 
     <div class="card bg-base-100 border border-base-300">
       <div class="card-body">

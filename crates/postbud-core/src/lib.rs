@@ -14,6 +14,7 @@ pub mod rdns;
 pub mod relayqueue;
 pub mod retry;
 pub mod showq;
+pub mod silence;
 
 /// What a delivery attempt or a bounce means for the message.
 ///

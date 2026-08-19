@@ -7,6 +7,7 @@
 
 use anyhow::Context;
 use chrono::{DateTime, Utc};
+use postbud_core::silence;
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
@@ -49,6 +50,14 @@ pub struct Overview {
     pub queue_due: i64,
     pub active_suppressions: i64,
     pub bounces_7d: i64,
+    /// Whether the return path is carrying anything, and whether we have
+    /// enough evidence to say. Silence is the failure mode that hid a
+    /// bounce pipe which had never run once, so it gets its own verdict
+    /// rather than being left for someone to infer from a zero.
+    pub bounce_path: silence::Signal,
+    /// The same question for aggregate reports, which arrive on a
+    /// schedule rather than in proportion to volume.
+    pub dmarc_path: silence::Signal,
     /// Bounce reports the parser could not join to a message. A persistently
     /// rising number means queue ids are not being captured on the way out.
     /// Bounces from the last 7 days that could not be joined to a
@@ -134,7 +143,21 @@ pub async fn overview(pool: &PgPool) -> anyhow::Result<Overview> {
              where received_at > now() - interval '7 days') as bounces_7d,
            (select count(*) from bounce_report
              where message_id is null
-               and received_at > now() - interval '7 days') as unmatched_bounces",
+               and received_at > now() - interval '7 days') as unmatched_bounces,
+           -- Thirty days rather than seven: a bounce can lag its message
+           -- by the whole retry window plus whatever the receiver takes,
+           -- and the question here is whether the path works at all, not
+           -- how it did this week.
+           (select count(*) from message
+             where status = 'sent'
+               and created_at > now() - interval '30 days') as sent_30d,
+           (select count(*) from bounce_report
+             where received_at > now() - interval '30 days') as bounces_30d,
+           -- Date subtraction, not extract(day from interval): the latter
+           -- returns the DAYS COMPONENT, so a two-month gap reads as
+           -- however many days past the last whole month.
+           (select (now()::date - max(received_at)::date)::bigint
+              from dmarc_report) as report_age_days",
     )
     .fetch_one(pool)
     .await
@@ -149,6 +172,8 @@ pub async fn overview(pool: &PgPool) -> anyhow::Result<Overview> {
         active_suppressions: counters.get("active_suppressions"),
         bounces_7d: counters.get("bounces_7d"),
         unmatched_bounces: counters.get("unmatched_bounces"),
+        bounce_path: silence::bounce_signal(counters.get("sent_30d"), counters.get("bounces_30d")),
+        dmarc_path: silence::dmarc_signal(counters.get("report_age_days")),
     })
 }
 
