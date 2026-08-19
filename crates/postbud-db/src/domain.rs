@@ -120,6 +120,10 @@ pub struct CheckRow {
     /// Null when the DMARC record names no external report destination.
     pub report_auth_status: Option<String>,
     pub report_auth_observed: Option<String>,
+    /// Null when the domain expects no MX (so receives no bounces), or
+    /// when the relay could not be reached to ask.
+    pub bounce_status: Option<String>,
+    pub bounce_observed: Option<String>,
     pub valid: bool,
 }
 
@@ -133,8 +137,9 @@ pub async fn record_check(
         "insert into domain_check
              (domain_id, spf_status, spf_observed, dkim_status, dkim_observed,
               dmarc_status, dmarc_observed, mx_status, mx_observed,
-              report_auth_status, report_auth_observed, valid)
-         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+              report_auth_status, report_auth_observed, valid,
+              bounce_status, bounce_observed)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)",
     )
     .bind(domain_id)
     .bind(result.spf.status.as_str())
@@ -148,6 +153,8 @@ pub async fn record_check(
     .bind(result.report_auth.as_ref().map(|r| r.status.as_str()))
     .bind(result.report_auth.as_ref().and_then(|r| r.observed.clone()))
     .bind(result.valid)
+    .bind(result.bounce.as_ref().map(|b| b.status.as_str()))
+    .bind(result.bounce.as_ref().and_then(|b| b.observed.clone()))
     .execute(pool)
     .await
     .context("recording domain check")?;
@@ -163,7 +170,8 @@ pub async fn latest_checks(
                 domain_id, checked_at, spf_status, spf_observed,
                 dkim_status, dkim_observed, dmarc_status, dmarc_observed,
                 mx_status, mx_observed,
-                report_auth_status, report_auth_observed, valid
+                report_auth_status, report_auth_observed,
+                bounce_status, bounce_observed, valid
            from domain_check
           order by domain_id, id desc",
     )
@@ -186,6 +194,8 @@ pub async fn latest_checks(
                     dmarc_observed: r.get("dmarc_observed"),
                     mx_status: r.get("mx_status"),
                     mx_observed: r.get("mx_observed"),
+                    bounce_status: r.get("bounce_status"),
+                    bounce_observed: r.get("bounce_observed"),
                     report_auth_status: r.get("report_auth_status"),
                     report_auth_observed: r.get("report_auth_observed"),
                     valid: r.get("valid"),

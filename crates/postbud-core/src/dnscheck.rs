@@ -80,6 +80,14 @@ pub struct DomainResult {
     pub dmarc: RecordResult,
     /// None when no MX is expected.
     pub mx: Option<RecordResult>,
+    /// Whether the relay accepts `bounces@` for this domain. None when no
+    /// MX is expected (the domain never receives bounces) or when the
+    /// probe could not reach a verdict.
+    ///
+    /// Filled in by the caller rather than by [`evaluate`], because it
+    /// comes from an SMTP conversation rather than from DNS — and, like
+    /// `report_auth`, deliberately not part of `valid`.
+    pub bounce: Option<RecordResult>,
     /// None when the DMARC record names no external report destination.
     ///
     /// Deliberately NOT part of `valid`: where aggregate reports are sent
@@ -341,6 +349,9 @@ pub fn evaluate(expected: &Expected, observed: &Observed) -> DomainResult {
         && mx.as_ref().is_none_or(|m| m.status == Status::Ok);
 
     DomainResult {
+        // Not a DNS fact, so this function cannot know it. The caller
+        // fills it in after asking the relay.
+        bounce: None,
         spf,
         dkim,
         dmarc,
@@ -576,5 +587,100 @@ mod tests {
             Status::Ok
         );
         assert!(evaluate(&expected(), &all_good()).report_auth.is_none());
+    }
+}
+
+/// Is the relay actually willing to take a bounce for this domain?
+///
+/// The envelope sender postbud puts on every message is
+/// `bounces@<sending domain>`, and a DSN comes back to exactly that
+/// address. If the relay will not accept it, bounces are lost — silently,
+/// which is how they were lost before anyone noticed — and a receiver that
+/// verifies the envelope sender before accepting mail may refuse the
+/// original message outright.
+///
+/// The probe is two RCPT commands on one connection, and the CONTRAST is
+/// the signal rather than either reply alone. Asking only about
+/// `bounces@` is not enough: postbud probes from inside the relay's own
+/// `mynetworks`, where `permit_mynetworks` accepts any recipient the relay
+/// would forward, so a domain the relay merely relays for answers 250 just
+/// as a properly listed mailbox does. A second address that certainly does
+/// not exist separates them — a relay that is final destination for the
+/// domain refuses it, and one that would forward anything accepts it too.
+///
+/// `None` for any reply that is not a clean accept or a permanent refusal.
+/// A 4xx is the relay having a moment, and an outage must never be
+/// recorded as a domain losing its bounce path — the same rule the
+/// resolver checks follow.
+pub fn check_bounce_mailbox(bounce_reply: u16, control_reply: u16) -> Option<RecordResult> {
+    let accepted = |code: u16| match code {
+        200..=299 => Some(true),
+        500..=599 => Some(false),
+        _ => None,
+    };
+    let bounce = accepted(bounce_reply)?;
+    let control = accepted(control_reply)?;
+
+    Some(match (bounce, control) {
+        (false, _) => RecordResult {
+            status: Status::Missing,
+            observed: Some(format!(
+                "the relay refused the bounce mailbox ({bounce_reply});                  delivery status notifications for this domain are discarded"
+            )),
+        },
+        (true, true) => RecordResult {
+            status: Status::Mismatch,
+            observed: Some(format!(
+                "the relay accepted an address that cannot exist ({control_reply}),                  so it is forwarding for this domain rather than delivering it;                  whether the bounce mailbox is listed cannot be told from here"
+            )),
+        },
+        (true, false) => RecordResult {
+            status: Status::Ok,
+            observed: Some(
+                "the relay accepts the bounce mailbox and rejects what does not exist".into(),
+            ),
+        },
+    })
+}
+
+#[cfg(test)]
+mod bounce_mailbox_tests {
+    use super::*;
+
+    /// The shape a correctly configured domain answers with: the mailbox
+    /// is taken, and an address that cannot exist is refused.
+    #[test]
+    fn a_listed_mailbox_on_an_authoritative_relay_is_ok() {
+        let r = check_bounce_mailbox(250, 550).expect("conclusive");
+        assert_eq!(r.status, Status::Ok);
+    }
+
+    #[test]
+    fn a_refused_bounce_mailbox_is_missing() {
+        let r = check_bounce_mailbox(550, 550).expect("conclusive");
+        assert_eq!(r.status, Status::Missing);
+        assert!(r.observed.unwrap().contains("discarded"));
+    }
+
+    /// The case a single probe would have got wrong.
+    ///
+    /// Probing from inside the relay's own mynetworks, a domain it merely
+    /// FORWARDS for accepts everything — including the bounce mailbox.
+    /// Reading that as success would report a green bounce path for a
+    /// domain whose DSNs go nowhere, which is precisely the failure this
+    /// check exists to catch.
+    #[test]
+    fn a_relay_that_forwards_everything_proves_nothing() {
+        let r = check_bounce_mailbox(250, 250).expect("conclusive");
+        assert_eq!(r.status, Status::Mismatch);
+        assert!(r.observed.unwrap().contains("forwarding"));
+    }
+
+    /// A relay having a moment is not a domain losing its bounce path.
+    #[test]
+    fn a_transient_reply_records_nothing() {
+        assert!(check_bounce_mailbox(451, 550).is_none());
+        assert!(check_bounce_mailbox(250, 421).is_none());
+        assert!(check_bounce_mailbox(0, 0).is_none());
     }
 }

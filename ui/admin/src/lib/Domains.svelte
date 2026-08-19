@@ -271,6 +271,38 @@
               DMARC reports authorised: <code>{d.check.report_auth_observed}</code>
             </p>
           {/if}
+
+          <!-- Every message from this domain leaves with
+               bounces@<domain> as its envelope sender, and a DSN comes
+               back to exactly that. If the relay will not take it the
+               bounces are discarded in silence -- and a receiver that
+               verifies the envelope sender may refuse the original mail
+               over an address that does not resolve. -->
+          {#if d.check?.bounce_status === "missing"}
+            <div class="alert alert-warning text-sm py-2">
+              <div>
+                <span class="font-semibold">Bounces for this domain are being discarded.</span>
+                {d.check.bounce_observed}
+                <div class="opacity-80 mt-1">
+                  Add <code>bounces@{d.domain}</code> to the relay's recipient
+                  allowlist and route it to the bounce pipe. Until then no
+                  address here can ever be suppressed, and a receiver that
+                  verifies the envelope sender may reject the mail outright.
+                </div>
+              </div>
+            </div>
+          {:else if d.check?.bounce_status === "mismatch"}
+            <div class="alert alert-warning text-sm py-2">
+              <div>
+                <span class="font-semibold">The relay is not the final destination for this domain.</span>
+                {d.check.bounce_observed}
+              </div>
+            </div>
+          {:else if d.check?.bounce_status === "ok"}
+            <p class="text-xs opacity-60">
+              Bounce mailbox reachable: <code>bounces@{d.domain}</code>
+            </p>
+          {/if}
         </div>
       </div>
     {:else}

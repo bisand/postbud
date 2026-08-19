@@ -121,7 +121,16 @@ reputation checklist in [docs/dns.md](docs/dns.md).
   an ISP resolver serving a stale NXDOMAIN made the checker report
   "missing" for live records. `DNS_RESOLVERS` overrides.
   Checks are insert-only history. `DNS_SPF_DEFAULT` prefills new
-  domains.
+  domains. The checker also asks the RELAY, over SMTP, whether it will
+  accept `bounces@<domain>` -- the envelope sender every message now
+  carries, and the address a DSN comes back to. Two RCPTs on one
+  connection and the CONTRAST is the answer: postbud probes from inside
+  `mynetworks`, where a domain the relay merely forwards for accepts
+  anything, so a second address that cannot exist is what separates
+  "listed mailbox" from "would forward". Skipped when no MX is expected
+  (the domain receives no bounces) and when the relay cannot be reached;
+  like `report_auth` it is NOT part of `valid`, which drives the recheck
+  cadence.
 - **DMARC aggregate reports are evidence, never instructions.** The
   registry says what DNS should carry and `dnscheck` says what it does
   carry; only the receivers say what they CONCLUDED -- the one outcome

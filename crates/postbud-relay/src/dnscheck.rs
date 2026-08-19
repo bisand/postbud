@@ -15,6 +15,21 @@ use postbud_core::rdns;
 use sqlx::PgPool;
 use std::time::Duration;
 
+/// The local part postbud puts on every envelope sender, and therefore
+/// the address a bounce comes back to. Mirrors `BOUNCE_MAILBOX` in the
+/// relay's send path; if one is changed the other must be.
+const BOUNCE_MAILBOX: &str = "bounces";
+
+/// Where the relay answers SMTP, read the same way the send path reads it.
+fn relay_endpoint() -> (String, u16) {
+    let host = std::env::var("RELAY_HOST").unwrap_or_else(|_| "127.0.0.1".into());
+    let port = std::env::var("RELAY_PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(25);
+    (host, port)
+}
+
 pub const RECHECK_MINUTES: i64 = 15;
 pub const REVALIDATE_HOURS: i64 = 24;
 const TICK: Duration = Duration::from_secs(60);
@@ -148,6 +163,107 @@ async fn smtp_banner_host(host: &str, port: u16) -> Option<String> {
     (!name.is_empty()).then_some(name)
 }
 
+/// Ask the relay whether it will take a bounce for this domain.
+///
+/// Two RCPT commands on one connection, and the CONTRAST between them is
+/// the answer — see [`dnscheck::check_bounce_mailbox`] for why one is not
+/// enough. Nothing is ever delivered: no DATA is sent, and the transaction
+/// is abandoned with RSET before QUIT.
+///
+/// The null sender is deliberate. A delivery status notification arrives
+/// with `MAIL FROM:<>`, and a relay may treat that envelope differently
+/// from any other, so the probe uses the envelope a real bounce would.
+///
+/// Every failure returns None. An unreachable relay is our outage, and
+/// recording it as a domain losing its bounce path would leave a lie in
+/// the history — the same rule the resolver checks follow.
+async fn probe_bounce_mailbox(
+    host: &str,
+    port: u16,
+    domain: &str,
+    mailbox: &str,
+) -> Option<(u16, u16)> {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use tokio::net::TcpStream;
+
+    let stream = tokio::time::timeout(Duration::from_secs(10), TcpStream::connect((host, port)))
+        .await
+        .ok()?
+        .ok()?;
+    let mut io = BufReader::new(stream);
+
+    // A reply may run to several lines; only the last carries no hyphen
+    // after the code, and only its code is the answer.
+    async fn reply<S>(io: &mut BufReader<S>) -> Option<u16>
+    where
+        S: tokio::io::AsyncRead + Unpin,
+    {
+        loop {
+            let mut line = String::new();
+            tokio::time::timeout(Duration::from_secs(10), io.read_line(&mut line))
+                .await
+                .ok()?
+                .ok()?;
+            if line.is_empty() {
+                return None;
+            }
+            let code: u16 = line.get(..3)?.parse().ok()?;
+            if line.as_bytes().get(3) != Some(&b'-') {
+                return Some(code);
+            }
+        }
+    }
+
+    // Both bounds: the writer is reached through the BufReader, which is
+    // only a BufReader at all because S can be read.
+    async fn send<S>(io: &mut BufReader<S>, line: &str) -> Option<()>
+    where
+        S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+    {
+        io.get_mut().write_all(line.as_bytes()).await.ok()?;
+        io.get_mut().write_all(b"\r\n").await.ok()
+    }
+
+    if reply(&mut io).await? / 100 != 2 {
+        return None;
+    }
+    // Announces a name that is an FQDN in shape but can never resolve:
+    // the probe should not claim to be the relay, nor any real host.
+    send(&mut io, "EHLO postbud-check.invalid").await?;
+    if reply(&mut io).await? / 100 != 2 {
+        return None;
+    }
+    send(&mut io, "MAIL FROM:<>").await?;
+    if reply(&mut io).await? / 100 != 2 {
+        return None;
+    }
+
+    send(&mut io, &format!("RCPT TO:<{mailbox}@{domain}>")).await?;
+    let bounce = reply(&mut io).await?;
+
+    // An address that cannot exist. Unique per probe so nothing can be
+    // cached or allowlisted into existence between runs.
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_nanos();
+    send(
+        &mut io,
+        &format!("RCPT TO:<postbud-probe-{nonce}@{domain}>"),
+    )
+    .await?;
+    let control = reply(&mut io).await?;
+
+    // Abandon the transaction explicitly rather than relying on the
+    // disconnect: an accepted recipient with no DATA is nothing, but
+    // saying so is cheap and leaves a tidier log on the relay.
+    let _ = send(&mut io, "RSET").await;
+    let _ = reply(&mut io).await;
+    let _ = send(&mut io, "QUIT").await;
+
+    Some((bounce, control))
+}
+
 /// Look up the relay's identity: forward addresses, their PTR names, and
 /// the greeting it answers with.
 pub async fn observe_relay(
@@ -235,7 +351,22 @@ pub async fn run_due_checks(pool: &PgPool, resolver: &TokioAsyncResolver) -> any
             dkim_public_key: d.dkim_public_key.clone(),
             mx: d.mx_expected.clone(),
         };
-        let result = dnscheck::evaluate(&expected, &observed);
+        let mut result = dnscheck::evaluate(&expected, &observed);
+
+        // Only for domains that are supposed to receive bounces at all.
+        // A null expected MX already means "never receives bounces", so
+        // asking would be inventing a verdict for a domain that wants
+        // none.
+        if expected.mx.is_some() {
+            let (host, port) = relay_endpoint();
+            result.bounce = match probe_bounce_mailbox(&host, port, &d.domain, BOUNCE_MAILBOX).await
+            {
+                Some((bounce, control)) => dnscheck::check_bounce_mailbox(bounce, control),
+                // Unreachable relay is our outage; record nothing.
+                None => None,
+            };
+        }
+
         postbud_db::domain::record_check(pool, d.id, &result).await?;
         checked += 1;
     }
