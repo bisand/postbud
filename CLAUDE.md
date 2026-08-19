@@ -78,7 +78,13 @@ reputation checklist in [docs/dns.md](docs/dns.md).
   `retry_window_survives_an_overnight_outage` fails if it is shortened.
 - **Tenants are bound to sending domains.** Exact match, no implied
   subdomains — a leaked key for one tenant must not be able to send as
-  another. The Message-ID's domain is the SENDER's domain, never an
+  another. Changing that binding is recorded: `tenant_domain_change`
+  (0010) is insert-only and carries the actor and the before-value, in
+  the same transaction as the change. It was a destructive UPDATE, and
+  answering "was this a misconfiguration or a bypass?" once took
+  inference from message timestamps because the direct evidence did not
+  exist. The LIVE list stays on `tenant.from_domains` where the send path
+  reads it — nothing reads the history to make a decision. The Message-ID's domain is the SENDER's domain, never an
   installation hostname baked into the code.
 - **No secrets in this repo.** The DKIM private key is a Kubernetes
   Secret, mounted into the opendkim container -- NOT a file on a host any

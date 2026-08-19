@@ -12,6 +12,21 @@
   // Create form.
   let name = $state("");
   let domains = $state("");
+  let history = $state(null);
+
+  async function showHistory(id) {
+    if (history?.id === id) {
+      history = null;
+      return;
+    }
+    history = { id, rows: null };
+    try {
+      history = { id, rows: await api(`/tenants/${id}/domain-history`) };
+    } catch (e) {
+      error = e.message;
+      history = null;
+    }
+  }
   let note = $state("");
 
   // Per-row edit + two-step confirms.
@@ -163,7 +178,30 @@
                         >
                           Edit
                         </button>
+                        <button class="btn btn-xs btn-ghost" onclick={() => showHistory(t.id)}>
+                          History
+                        </button>
                       </div>
+                      <!-- Which domains a tenant could send as, and when, is
+                           the question asked AFTER something looks wrong.
+                           Without it the answer is inference from message
+                           timestamps. -->
+                      {#if history?.id === t.id}
+                        {#if history.rows === null}
+                          <span class="loading loading-spinner loading-xs mt-1"></span>
+                        {:else}
+                          <div class="mt-2 text-xs">
+                            {#each history.rows as h}
+                              <div class="opacity-70">
+                                {fmtTime(h.changed_at)} · {h.changed_by} ·
+                                <code>{h.domains_before.join(", ") || "—"}</code>
+                                →
+                                <code>{h.domains_after.join(", ") || "—"}</code>
+                              </div>
+                            {/each}
+                          </div>
+                        {/if}
+                      {/if}
                     {/if}
                   </td>
                   <td class="hidden sm:table-cell whitespace-nowrap">{t.messages_7d} / {t.messages_total}</td>

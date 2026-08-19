@@ -128,7 +128,7 @@ async fn main() -> Result<()> {
         }) => {
             let pool = pool().await?;
             let (tenant, key) =
-                postbud_db::tenant::create(&pool, &name, &domains, note.as_deref()).await?;
+                postbud_db::tenant::create(&pool, &name, &domains, note.as_deref(), "cli").await?;
             println!("tenant {} created ({})", tenant.name, tenant.id);
             println!("domains: {}", tenant.from_domains.join(", "));
             println!();

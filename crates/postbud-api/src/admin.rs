@@ -50,6 +50,10 @@ pub fn router() -> Router<AppState> {
         )
         .route("/admin/api/tenants", get(tenants).post(tenant_create))
         .route("/admin/api/tenants/{id}/rotate-key", post(tenant_rotate))
+        .route(
+            "/admin/api/tenants/{id}/domain-history",
+            get(tenant_domain_history),
+        )
         .route("/admin/api/tenants/{id}/active", post(tenant_active))
         .route(
             "/admin/api/tenants/{id}/domains",
@@ -397,7 +401,7 @@ fn clean_domains(raw: &[String]) -> Result<Vec<String>, ApiError> {
 
 async fn tenant_create(
     State(state): State<AppState>,
-    AdminWrite(_admin): AdminWrite,
+    AdminWrite(admin): AdminWrite,
     Json(req): Json<TenantCreate>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let name = req.name.trim();
@@ -406,7 +410,14 @@ async fn tenant_create(
     }
     let domains = clean_domains(&req.from_domains)?;
 
-    let (created, key) = tenant::create(&state.pool, name, &domains, req.note.as_deref()).await?;
+    let (created, key) = tenant::create(
+        &state.pool,
+        name,
+        &domains,
+        req.note.as_deref(),
+        &admin.actor,
+    )
+    .await?;
 
     // The key appears in this response and nowhere else, ever — postbud
     // stores only its digest and cannot repeat it.
@@ -452,14 +463,26 @@ struct TenantDomains {
     from_domains: Vec<String>,
 }
 
+/// What this tenant has been allowed to send as, and who changed it.
+///
+/// Read-only for every role, including the one that can make the change:
+/// an audit record an operator can edit answers nothing.
+async fn tenant_domain_history(
+    State(state): State<AppState>,
+    _admin: Admin,
+    Path(id): Path<Uuid>,
+) -> ApiResult<Json<Vec<tenant::DomainChange>>> {
+    Ok(Json(tenant::domain_history(&state.pool, id).await?))
+}
+
 async fn tenant_domains(
     State(state): State<AppState>,
-    AdminWrite(_admin): AdminWrite,
+    AdminWrite(admin): AdminWrite,
     Path(id): Path<Uuid>,
     Json(req): Json<TenantDomains>,
 ) -> ApiResult<StatusCode> {
     let domains = clean_domains(&req.from_domains)?;
-    if tenant::set_domains(&state.pool, id, &domains).await? {
+    if tenant::set_domains(&state.pool, id, &domains, &admin.actor).await? {
         Ok(StatusCode::NO_CONTENT)
     } else {
         Err(ApiError::NotFound)

@@ -32,6 +32,7 @@ async fn tenant(pool: &sqlx::PgPool) -> Uuid {
         &format!("queue-test-{}", Uuid::new_v4()),
         &["queue.test".into()],
         Some("created by queue_db.rs"),
+        "queue_db.rs",
     )
     .await
     .expect("creating tenant");
