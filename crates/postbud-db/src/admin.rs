@@ -62,6 +62,10 @@ pub struct Overview {
     /// from `dmarc_path`, which only says whether reports arrive at all:
     /// a channel can be working perfectly and carrying bad news.
     pub dmarc_failing: Vec<String>,
+    /// Tenants sending unlike themselves. Names only the ones worth
+    /// looking at, because a list of everything normal is a list nobody
+    /// reads.
+    pub tenants_unusual: Vec<TenantVolumeAlert>,
     /// Bounce reports the parser could not join to a message. A persistently
     /// rising number means queue ids are not being captured on the way out.
     /// Bounces from the last 7 days that could not be joined to a
@@ -74,6 +78,67 @@ pub struct Overview {
     /// about is a RISING rate, and a window is what measures that: it
     /// clears itself when correlation is healthy again.
     pub unmatched_bounces: i64,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct TenantVolumeAlert {
+    pub tenant: String,
+    pub signal: postbud_core::volume::Volume,
+}
+
+/// Each active tenant's last day against its own typical day.
+///
+/// The baseline is a MEDIAN over the last fortnight INCLUDING the days a
+/// tenant sent nothing, which is the whole point: a mean is dragged
+/// upwards by exactly the month-end bursts this has to see past, and
+/// dropping the zero days would drag it up again. `generate_series` is
+/// what puts the silent days back in.
+async fn tenant_volume(pool: &PgPool) -> anyhow::Result<Vec<TenantVolumeAlert>> {
+    let rows = sqlx::query(
+        "with days as (
+             select generate_series(
+                        (now() - interval '15 days')::date,
+                        (now() - interval '1 day')::date,
+                        interval '1 day')::date as d
+         ),
+         sent as (
+             select tenant_id, created_at::date as d, count(*) as n
+               from message
+              where created_at >= now() - interval '15 days'
+              group by 1, 2
+         )
+         select t.name                                                     as tenant,
+                coalesce(percentile_cont(0.5) within group (
+                    order by coalesce(s.n, 0)), 0)::float8                 as typical_daily,
+                (select count(*) from message m
+                  where m.tenant_id = t.id
+                    and m.created_at > now() - interval '24 hours')        as recent_24h,
+                (now()::date - t.created_at::date)::bigint                 as history_days
+           from tenant t
+           cross join days
+           left join sent s on s.tenant_id = t.id and s.d = days.d
+          where t.active
+          group by t.id, t.name, t.created_at
+          order by t.name",
+    )
+    .fetch_all(pool)
+    .await
+    .context("measuring tenant volume")?;
+
+    Ok(rows
+        .into_iter()
+        .filter_map(|r| {
+            let signal = postbud_core::volume::judge(
+                r.get("recent_24h"),
+                r.get("typical_daily"),
+                r.get("history_days"),
+            );
+            signal.is_unusual().then(|| TenantVolumeAlert {
+                tenant: r.get("tenant"),
+                signal,
+            })
+        })
+        .collect())
 }
 
 pub async fn overview(pool: &PgPool) -> anyhow::Result<Overview> {
@@ -184,6 +249,7 @@ pub async fn overview(pool: &PgPool) -> anyhow::Result<Overview> {
             .filter(|d| d.alignment.is_failing())
             .map(|d| d.domain)
             .collect(),
+        tenants_unusual: tenant_volume(pool).await?,
     })
 }
 

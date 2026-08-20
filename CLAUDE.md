@@ -182,6 +182,20 @@ reputation checklist in [docs/dns.md](docs/dns.md).
   mechanism carried DMARC rather than the pass rate, because a domain
   riding DKIM alone reads as a flawless 100% right up until the day the
   key rotates.
+- **A leaked tenant key is noticed, not capped.** `postbud-core::volume`
+  compares each tenant's last day against its own typical day and names
+  the ones sending unlike themselves; the wording points at deactivation
+  and key rotation, because a limit bounds the damage while revocation
+  ends it. The baseline is a MEDIAN over a fortnight INCLUDING silent
+  days -- a mean is dragged up by exactly the month-end bursts this has
+  to see past, so a tenant sending 3/day with one 500 spike would hide a
+  leak at 300/day. An absolute floor comes first: under `MIN_DAILY` no
+  multiple is reported, which also disposes of new tenants and zero
+  baselines where every ratio is infinite and none is evidence.
+  Transactional senders are bursty by nature, and a signal that calls a
+  legitimate invoice run an incident gets switched off before the day it
+  matters. There is deliberately NO rate limit: one cannot be set
+  honestly without a baseline, and this is what produces it.
 - **Applied migrations are never edited** — sqlx checksums them. Their
   comments are part of the record, even where newer policy (like this
   file's genericity rule) would phrase them differently today.

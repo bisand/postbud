@@ -88,6 +88,22 @@
       </div>
     {/if}
 
+    <!-- Named rather than capped. A limit bounds the damage from a leaked
+         key; revoking it ends the damage, which is why the wording points
+         at the action instead of a number. -->
+    {#if data.tenants_unusual.length > 0}
+      <div class="alert alert-warning text-sm py-2">
+        <div>
+          <div class="font-semibold">A tenant is sending unlike itself.</div>
+          {#each data.tenants_unusual as t}
+            <div class="mt-1">
+              <span class="font-mono">{t.tenant}</span> — {t.signal.detail}
+            </div>
+          {/each}
+        </div>
+      </div>
+    {/if}
+
     <!-- A working channel can carry bad news, so this is separate from
          the silence card below: that one says reports are arriving, this
          says what they contain. -->
