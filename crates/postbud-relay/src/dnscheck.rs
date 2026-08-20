@@ -345,6 +345,7 @@ pub async fn run_due_checks(pool: &PgPool, resolver: &TokioAsyncResolver) -> any
             spf: d.spf_expected.clone(),
             dkim_public_key: d.dkim_public_key.clone(),
             mx: d.mx_expected.clone(),
+            dmarc_policy: d.dmarc_policy_expected.clone(),
         };
         let mut result = dnscheck::evaluate(&expected, &observed);
 

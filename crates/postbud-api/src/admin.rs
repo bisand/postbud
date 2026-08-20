@@ -607,6 +607,11 @@ async fn relay_identity(
 #[derive(Debug, Deserialize)]
 struct DomainAdd {
     domain: String,
+    /// The enforcement level this domain is meant to publish, if the
+    /// caller has an opinion. Omitted means only the policy's syntax is
+    /// checked — which is still worth doing, because DMARC fails open and
+    /// an unreadable p= tag protects nothing while looking valid.
+    dmarc_policy_expected: Option<String>,
     /// Defaults to authorizing exactly this installation's relay — the
     /// caller may override for include:-style setups.
     spf_expected: Option<String>,
@@ -657,6 +662,22 @@ async fn domain_add(
         },
     };
 
+    // Optional: with no stated level only the policy's SYNTAX is checked.
+    // Rejected here rather than stored and puzzled over later, since a
+    // registry value that is not a policy cannot be compared to one.
+    let policy = match req.dmarc_policy_expected.as_deref().map(str::trim) {
+        Some(p) if !p.is_empty() => {
+            let p = p.to_ascii_lowercase();
+            if !matches!(p.as_str(), "none" | "quarantine" | "reject") {
+                return Err(ApiError::BadRequest(format!(
+                    "dmarc_policy_expected must be none, quarantine or reject (got '{p}')"
+                )));
+            }
+            Some(p)
+        }
+        _ => None,
+    };
+
     let created = postbud_db::domain::add(
         &state.pool,
         &domain,
@@ -667,6 +688,7 @@ async fn domain_add(
             .as_deref()
             .map(str::trim)
             .filter(|m| !m.is_empty()),
+        policy.as_deref(),
         &admin.actor,
     )
     .await

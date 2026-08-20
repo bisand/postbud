@@ -46,6 +46,9 @@ pub struct Expected {
     pub dkim_public_key: String,
     /// None = the domain is not required to route bounces.
     pub mx: Option<String>,
+    /// The enforcement level this domain is meant to publish, if anyone
+    /// has said. None = no opinion, and then only the syntax is checked.
+    pub dmarc_policy: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -187,23 +190,100 @@ fn check_dkim(observed: &[String], expected_key: &str) -> RecordResult {
     }
 }
 
-fn check_dmarc(observed: &[String], found_at: Option<&str>) -> RecordResult {
+/// The enforcement levels, weakest first. Ordered because the ORDER is
+/// the point: drifting down from `reject` to `none` is a domain quietly
+/// losing its protection, while drifting up is somebody tightening it.
+/// Only one of those is worth a red badge.
+const POLICY_LADDER: [&str; 3] = ["none", "quarantine", "reject"];
+
+fn policy_rank(p: &str) -> Option<usize> {
+    let p = p.trim().to_ascii_lowercase();
+    POLICY_LADDER.iter().position(|known| *known == p)
+}
+
+/// Read one tag out of a DMARC record.
+///
+/// Compared whole, never by prefix: `p` and `pct` share one, and a check
+/// that reads `pct=100` as a policy of "100" would be worse than no check.
+fn dmarc_tag(record: &str, name: &str) -> Option<String> {
+    record.split(';').find_map(|part| {
+        let (key, value) = part.split_once('=')?;
+        key.trim()
+            .eq_ignore_ascii_case(name)
+            .then(|| value.trim().to_string())
+    })
+}
+
+fn check_dmarc(
+    observed: &[String],
+    found_at: Option<&str>,
+    expected: Option<&str>,
+) -> RecordResult {
     let dmarc = observed.iter().find(|t| {
         let t = t.trim_start();
         t.len() >= 8 && t[..8].eq_ignore_ascii_case("v=DMARC1")
     });
-    match dmarc {
-        Some(record) => RecordResult {
-            status: Status::Ok,
-            observed: Some(match found_at {
-                Some(name) => format!("{} (at {name})", normalize_spaces(record)),
-                None => normalize_spaces(record),
-            }),
-        },
-        None => RecordResult {
+    let Some(record) = dmarc else {
+        return RecordResult {
             status: Status::Missing,
             observed: None,
-        },
+        };
+    };
+
+    let shown = match found_at {
+        Some(name) => format!("{} (at {name})", normalize_spaces(record)),
+        None => normalize_spaces(record),
+    };
+    let mismatch = |why: String| RecordResult {
+        status: Status::Mismatch,
+        observed: Some(format!("{shown} — {why}")),
+    };
+
+    // Checked for everyone, with or without an opinion on the level.
+    // DMARC fails OPEN: a receiver that cannot parse the policy tag falls
+    // back to no enforcement, so a typo does not break loudly, it stops
+    // protecting the domain and keeps looking like a valid record. That
+    // is precisely the failure a presence-only check cannot see.
+    let found = dmarc_tag(record, "p");
+    let Some(rank) = found.as_deref().and_then(policy_rank) else {
+        return mismatch(match found {
+            Some(p) => format!(
+                "'p={p}' is not one of {}; receivers that cannot read the policy \
+                 fall back to no enforcement",
+                POLICY_LADDER.join(", ")
+            ),
+            None => "no p= tag, so the record enforces nothing".into(),
+        });
+    };
+
+    let Some(want) = expected else {
+        return RecordResult {
+            status: Status::Ok,
+            observed: Some(shown),
+        };
+    };
+    let Some(want_rank) = policy_rank(want) else {
+        // The registry's own value is nonsense; say so rather than
+        // measuring DNS against it.
+        return mismatch(format!("expected policy '{want}' is not a DMARC policy"));
+    };
+
+    let found = found.unwrap_or_default();
+    if rank < want_rank {
+        return mismatch(format!(
+            "expected p={want}, published p={found} — the domain is enforcing \
+             LESS than it is meant to"
+        ));
+    }
+    RecordResult {
+        status: Status::Ok,
+        observed: Some(if rank > want_rank {
+            // Not a fault: somebody tightened it. Worth saying so, since
+            // the registry no longer describes the domain.
+            format!("{shown} — stricter than the expected p={want}")
+        } else {
+            shown
+        }),
     }
 }
 
@@ -339,7 +419,11 @@ fn check_report_auth(observed: &[(String, Vec<String>)]) -> Option<RecordResult>
 pub fn evaluate(expected: &Expected, observed: &Observed) -> DomainResult {
     let spf = check_spf(&observed.domain_txt, &expected.spf);
     let dkim = check_dkim(&observed.dkim_txt, &expected.dkim_public_key);
-    let dmarc = check_dmarc(&observed.dmarc_txt, observed.dmarc_found_at.as_deref());
+    let dmarc = check_dmarc(
+        &observed.dmarc_txt,
+        observed.dmarc_found_at.as_deref(),
+        expected.dmarc_policy.as_deref(),
+    );
     let mx = expected.mx.as_deref().map(|m| check_mx(&observed.mx, m));
     let report_auth = check_report_auth(&observed.report_auth);
 
@@ -396,6 +480,9 @@ mod tests {
             spf: "v=spf1 ip4:192.0.2.10 -all".into(),
             dkim_public_key: "MIIBIjANBgkqAAAA".into(),
             mx: Some("mail.example.com".into()),
+            // Most tests have no opinion on the level, which is also the
+            // default for a domain nobody has configured one for.
+            dmarc_policy: None,
         }
     }
 
@@ -682,5 +769,97 @@ mod bounce_mailbox_tests {
         assert!(check_bounce_mailbox(451, 550).is_none());
         assert!(check_bounce_mailbox(250, 421).is_none());
         assert!(check_bounce_mailbox(0, 0).is_none());
+    }
+}
+
+#[cfg(test)]
+mod dmarc_policy_tests {
+    use super::*;
+
+    fn check(record: &str, expected: Option<&str>) -> RecordResult {
+        check_dmarc(&[record.to_string()], Some("_dmarc.example.com"), expected)
+    }
+
+    /// `p` and `pct` share a prefix. Reading the policy as "100" would be
+    /// worse than not reading it at all.
+    #[test]
+    fn the_policy_tag_is_not_confused_with_pct() {
+        let r = check("v=DMARC1; pct=100; p=reject", None);
+        assert_eq!(r.status, Status::Ok, "{:?}", r.observed);
+        assert_eq!(
+            dmarc_tag("v=DMARC1; pct=100; p=reject", "p").as_deref(),
+            Some("reject")
+        );
+    }
+
+    /// The check that needs no configuration at all.
+    ///
+    /// DMARC fails OPEN: a receiver that cannot read the policy tag falls
+    /// back to no enforcement. So a typo does not break loudly — it stops
+    /// protecting the domain while still looking like a valid record,
+    /// which a presence-only check can never see.
+    #[test]
+    fn an_unreadable_policy_is_a_mismatch_even_with_no_opinion() {
+        for bad in [
+            "v=DMARC1; p=quarantne; rua=mailto:d@example.com",
+            "v=DMARC1; p=; rua=mailto:d@example.com",
+            "v=DMARC1; rua=mailto:d@example.com",
+        ] {
+            let r = check(bad, None);
+            assert_eq!(r.status, Status::Mismatch, "{bad} should not pass");
+        }
+    }
+
+    #[test]
+    fn a_readable_policy_passes_when_nobody_has_an_opinion() {
+        for good in [
+            "v=DMARC1; p=none",
+            "v=DMARC1; p=quarantine",
+            "v=DMARC1; p=REJECT",
+        ] {
+            assert_eq!(check(good, None).status, Status::Ok, "{good}");
+        }
+    }
+
+    /// The failure this exists for: a domain quietly losing enforcement.
+    #[test]
+    fn dropping_below_the_expected_policy_is_a_mismatch() {
+        let r = check("v=DMARC1; p=none", Some("reject"));
+        assert_eq!(r.status, Status::Mismatch);
+        assert!(r.observed.unwrap().contains("LESS than it is meant to"));
+    }
+
+    /// ...and the mirror image is not a fault. Somebody tightened the
+    /// policy; a red badge for that would train an operator to ignore
+    /// the badge, and the honest response is to say the registry is now
+    /// behind the domain.
+    #[test]
+    fn exceeding_the_expected_policy_is_not_a_fault() {
+        let r = check("v=DMARC1; p=reject", Some("quarantine"));
+        assert_eq!(r.status, Status::Ok);
+        assert!(r.observed.unwrap().contains("stricter than"));
+    }
+
+    #[test]
+    fn meeting_the_expected_policy_is_plainly_ok() {
+        let r = check("v=DMARC1; p=quarantine", Some("quarantine"));
+        assert_eq!(r.status, Status::Ok);
+        assert!(!r.observed.unwrap().contains("stricter"));
+    }
+
+    /// A nonsense expectation must not be measured against DNS, or every
+    /// domain configured that way reads as broken for ever.
+    #[test]
+    fn a_nonsense_expected_policy_blames_the_registry() {
+        let r = check("v=DMARC1; p=reject", Some("strict"));
+        assert_eq!(r.status, Status::Mismatch);
+        assert!(r.observed.unwrap().contains("expected policy 'strict'"));
+    }
+
+    /// No record at all is still missing, not a bad policy.
+    #[test]
+    fn an_absent_record_is_still_missing() {
+        let r = check_dmarc(&[], None, Some("reject"));
+        assert_eq!(r.status, Status::Missing);
     }
 }

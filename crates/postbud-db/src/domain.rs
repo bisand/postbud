@@ -13,6 +13,9 @@ pub struct SendingDomain {
     pub dkim_selector: String,
     pub dkim_public_key: String,
     pub mx_expected: Option<String>,
+    /// The enforcement level this domain is meant to publish. None = no
+    /// opinion, and then only the syntax of the policy is checked.
+    pub dmarc_policy_expected: Option<String>,
     pub created_at: DateTime<Utc>,
     pub created_by: String,
 }
@@ -22,6 +25,7 @@ fn row_to_domain(r: sqlx::postgres::PgRow) -> SendingDomain {
         id: r.get("id"),
         domain: r.get("domain"),
         spf_expected: r.get("spf_expected"),
+        dmarc_policy_expected: r.get("dmarc_policy_expected"),
         dkim_selector: r.get("dkim_selector"),
         dkim_public_key: r.get("dkim_public_key"),
         mx_expected: r.get("mx_expected"),
@@ -32,7 +36,8 @@ fn row_to_domain(r: sqlx::postgres::PgRow) -> SendingDomain {
 
 pub async fn list(pool: &PgPool) -> anyhow::Result<Vec<SendingDomain>> {
     let rows = sqlx::query(
-        "select id, domain, spf_expected, dkim_selector, dkim_public_key,
+        "select id, domain, spf_expected, dmarc_policy_expected,
+                dkim_selector, dkim_public_key,
                 mx_expected, created_at, created_by
            from sending_domain
           where ended_at is null
@@ -46,7 +51,8 @@ pub async fn list(pool: &PgPool) -> anyhow::Result<Vec<SendingDomain>> {
 
 pub async fn by_id(pool: &PgPool, id: i64) -> anyhow::Result<Option<SendingDomain>> {
     let row = sqlx::query(
-        "select id, domain, spf_expected, dkim_selector, dkim_public_key,
+        "select id, domain, spf_expected, dmarc_policy_expected,
+                dkim_selector, dkim_public_key,
                 mx_expected, created_at, created_by
            from sending_domain
           where id = $1 and ended_at is null",
@@ -66,14 +72,16 @@ pub async fn add(
     dkim_selector: &str,
     dkim_public_key: &str,
     mx_expected: Option<&str>,
+    dmarc_policy_expected: Option<&str>,
     created_by: &str,
 ) -> anyhow::Result<SendingDomain> {
     let row = sqlx::query(
         "insert into sending_domain
              (domain, spf_expected, dkim_selector, dkim_public_key,
-              mx_expected, created_by)
-         values ($1, $2, $3, $4, $5, $6)
-         returning id, domain, spf_expected, dkim_selector, dkim_public_key,
+              mx_expected, dmarc_policy_expected, created_by)
+         values ($1, $2, $3, $4, $5, $6, $7)
+         returning id, domain, spf_expected, dmarc_policy_expected,
+                   dkim_selector, dkim_public_key,
                    mx_expected, created_at, created_by",
     )
     .bind(domain)
@@ -81,6 +89,7 @@ pub async fn add(
     .bind(dkim_selector)
     .bind(dkim_public_key)
     .bind(mx_expected)
+    .bind(dmarc_policy_expected)
     .bind(created_by)
     .fetch_one(pool)
     .await
@@ -216,7 +225,8 @@ pub async fn due_for_check(
     revalidate_hours: i64,
 ) -> anyhow::Result<Vec<SendingDomain>> {
     let rows = sqlx::query(
-        "select d.id, d.domain, d.spf_expected, d.dkim_selector,
+        "select d.id, d.domain, d.spf_expected, d.dmarc_policy_expected,
+                d.dkim_selector,
                 d.dkim_public_key, d.mx_expected, d.created_at, d.created_by
            from sending_domain d
            left join lateral (

@@ -119,7 +119,14 @@ reputation checklist in [docs/dns.md](docs/dns.md).
   rotation kills the old key atomically.
 - **Domain verification** (docs/architecture.md §10): sending domains
   are a registry (expected SPF, DKIM selector + public key, MX); the
-  worker checks real DNS every 15 min until green, then daily. Rules are
+  worker checks real DNS every 15 min until green, then daily. The DMARC
+  check reads the POLICY, not just the record's presence: an unreadable
+  `p=` tag is a mismatch for every domain, because DMARC fails OPEN -- a
+  receiver that cannot parse it falls back to no enforcement while the
+  record still looks valid. `dmarc_policy_expected` (0011, optional) adds
+  a level to compare against, and only DOWNWARD drift is a fault;
+  publishing something stricter is somebody tightening their policy.
+  Rules are
   pure in `postbud-core::dnscheck` and encode the two real incidents:
   duplicate SPF = PermError even if one matches, and DKIM compared to
   the signing key byte-for-byte. Resolver failure skips, never records.

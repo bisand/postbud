@@ -14,6 +14,7 @@
   let publicKey = $state("");
   let spf = $state("");
   let mx = $state("");
+  let dmarcPolicy = $state("");
 
   async function load() {
     error = "";
@@ -42,11 +43,13 @@
           dkim_public_key: publicKey.trim(),
           spf_expected: spf.trim() || null,
           mx_expected: mx.trim() || null,
+          dmarc_policy_expected: dmarcPolicy || null,
         }),
       });
       notice = `${created.domain} registered — the worker checks it within a minute, then every 15 minutes until all records are green.`;
       domain = "";
       publicKey = "";
+      dmarcPolicy = "";
       spf = "";
       mx = "";
       await load();
@@ -340,6 +343,19 @@
             <label class="form-control">
               <span class="label-text text-xs mb-1">MX target (optional)</span>
               <input class="input input-bordered input-sm w-56" bind:value={mx} placeholder="relay hostname for bounces" />
+            </label>
+            <!-- Optional, and blank is a real answer: with no level stated
+                 the check still verifies the policy is READABLE, which
+                 matters because DMARC fails open — an unparseable p= tag
+                 protects nothing while still looking like a valid record. -->
+            <label class="form-control">
+              <span class="label-text text-xs mb-1">Expected DMARC policy (optional)</span>
+              <select class="select select-bordered select-sm w-40" bind:value={dmarcPolicy}>
+                <option value="">no opinion</option>
+                <option value="none">p=none</option>
+                <option value="quarantine">p=quarantine</option>
+                <option value="reject">p=reject</option>
+              </select>
             </label>
           </div>
           <label class="form-control">
