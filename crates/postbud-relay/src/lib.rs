@@ -24,6 +24,34 @@ use lettre::{Address, AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executo
 use postbud_core::address;
 use postbud_db::message::Claimed;
 
+/// The local part postbud puts on every envelope sender, and therefore the
+/// address a bounce comes back to.
+///
+/// ONE reader, deliberately. This value settles two things that have to
+/// agree: which address mail leaves with, and which address the domain
+/// checker asks the relay about. The checker used to keep its own copy of
+/// the name, so changing this variable pointed the two at different
+/// addresses — and because `bounces@` is usually still listed on the
+/// relay, the check would have gone on reporting a healthy bounce path for
+/// a domain whose notifications were being discarded. A monitor that lies
+/// is worse than no monitor, and the whole purpose of that one is catching
+/// silent bounce loss.
+///
+/// `bounces` is what docs/postfix documents and what the RCPT allowlist is
+/// written around. `None` when the variable is set empty: the escape hatch
+/// that leaves the envelope following `From:`, for a relay that cannot
+/// accept a bounces@ address — an envelope sender that does not resolve is
+/// itself a delivery risk at a receiver that verifies it. There is then no
+/// bounce mailbox at all, so there is nothing for the checker to verify
+/// either.
+pub fn bounce_mailbox() -> Option<String> {
+    let name = std::env::var("BOUNCE_MAILBOX")
+        .unwrap_or_else(|_| "bounces".into())
+        .trim()
+        .to_string();
+    (!name.is_empty()).then_some(name)
+}
+
 /// What the relay said about one handoff.
 #[derive(Debug, Clone)]
 pub enum Outcome {
@@ -94,20 +122,9 @@ impl Relay {
             builder = builder.credentials(Credentials::new(user, password));
         }
 
-        // `bounces` is what docs/postfix documents and what the RCPT
-        // allowlist is written around. Set BOUNCE_MAILBOX empty to keep
-        // the old behaviour of letting the envelope follow `From:` --
-        // the escape hatch for a relay that does not accept a bounces@
-        // address, where an undeliverable envelope sender could itself
-        // cost delivery at a receiver that verifies it.
-        let bounce_mailbox = std::env::var("BOUNCE_MAILBOX")
-            .unwrap_or_else(|_| "bounces".into())
-            .trim()
-            .to_string();
-
         Ok(Relay {
             transport: builder.build(),
-            bounce_mailbox: (!bounce_mailbox.is_empty()).then_some(bounce_mailbox),
+            bounce_mailbox: bounce_mailbox(),
         })
     }
 

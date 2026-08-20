@@ -77,29 +77,31 @@ fn claimed() -> Claimed {
     }
 }
 
-#[tokio::test]
-async fn the_envelope_sender_is_the_bounce_mailbox_not_the_from_header() {
+/// Run one handoff against a fresh fake relay and return every line the
+/// client sent. `mailbox` is what BOUNCE_MAILBOX is set to, or None to
+/// leave it unset.
+async fn handoff(mailbox: Option<&str>) -> Vec<String> {
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let port = listener.local_addr().expect("addr").port();
     let seen = Arc::new(Mutex::new(Vec::new()));
     let server = tokio::spawn(fake_relay(listener, seen.clone()));
 
-    // SAFETY: this test binary sets these before building the only Relay
-    // it constructs, and is the sole test in the file, so nothing else is
-    // reading the environment concurrently.
+    // SAFETY: one test, run to completion in order, so nothing else in
+    // this binary is reading the environment while it changes.
     unsafe {
         std::env::set_var("RELAY_HOST", "127.0.0.1");
         std::env::set_var("RELAY_PORT", port.to_string());
         std::env::set_var("RELAY_TLS", "none");
-        std::env::remove_var("BOUNCE_MAILBOX");
+        match mailbox {
+            Some(name) => std::env::set_var("BOUNCE_MAILBOX", name),
+            None => std::env::remove_var("BOUNCE_MAILBOX"),
+        }
     }
 
     let relay = Relay::from_env().expect("relay");
-    let outcome = relay.send(&claimed()).await;
-
-    match outcome {
+    match relay.send(&claimed()).await {
         Outcome::Accepted { queue_id } => {
-            // Proves the queue id still survives the change of send path.
+            // The queue id must survive whatever the envelope is doing.
             assert_eq!(queue_id.as_deref(), Some("TESTQUEUE1"));
         }
         other => panic!("expected acceptance, got {other:?}"),
@@ -110,15 +112,24 @@ async fn the_envelope_sender_is_the_bounce_mailbox_not_the_from_header() {
     // Every client line is already recorded -- `send` only returned
     // because the server had read the final `.` and answered it.
     server.abort();
-    let lines = seen.lock().unwrap().clone();
+    seen.lock().unwrap().clone()
+}
 
-    let mail_from = lines
+fn mail_from(lines: &[String]) -> &str {
+    lines
         .iter()
         .find(|l| l.to_ascii_uppercase().starts_with("MAIL FROM"))
-        .unwrap_or_else(|| panic!("no MAIL FROM in {lines:#?}"));
+        .unwrap_or_else(|| panic!("no MAIL FROM in {lines:#?}"))
+}
+
+#[tokio::test]
+async fn the_envelope_sender_is_the_bounce_mailbox_not_the_from_header() {
+    // Unset: the documented default.
+    let lines = handoff(None).await;
     assert!(
-        mail_from.contains("<bounces@mail.example.com>"),
-        "envelope sender must be the bounce mailbox, got {mail_from}"
+        mail_from(&lines).contains("<bounces@mail.example.com>"),
+        "envelope sender must default to the bounce mailbox, got {}",
+        mail_from(&lines)
     );
 
     // The header is untouched: replies still reach a person, which is the
@@ -136,5 +147,26 @@ async fn the_envelope_sender_is_the_bounce_mailbox_not_the_from_header() {
                 && l.contains("<customer@recipient.example>")
         }),
         "recipient must be unchanged, got {lines:#?}"
+    );
+
+    // Configured: the variable must actually reach the wire. It did not
+    // reach the DOMAIN CHECKER once, which kept its own copy of the name
+    // and so went on probing bounces@ while mail left as something else --
+    // reporting a healthy bounce path for notifications being discarded.
+    // Both now read one accessor; this pins the half a test can see.
+    let lines = handoff(Some("return-path")).await;
+    assert!(
+        mail_from(&lines).contains("<return-path@mail.example.com>"),
+        "BOUNCE_MAILBOX must decide the envelope sender, got {}",
+        mail_from(&lines)
+    );
+
+    // Empty: the escape hatch, where the envelope goes back to following
+    // `From:` for a relay that cannot accept a bounces@ address.
+    let lines = handoff(Some("")).await;
+    assert!(
+        mail_from(&lines).contains("<no-reply@mail.example.com>"),
+        "an empty BOUNCE_MAILBOX must leave the envelope on the From address, got {}",
+        mail_from(&lines)
     );
 }

@@ -15,11 +15,6 @@ use postbud_core::rdns;
 use sqlx::PgPool;
 use std::time::Duration;
 
-/// The local part postbud puts on every envelope sender, and therefore
-/// the address a bounce comes back to. Mirrors `BOUNCE_MAILBOX` in the
-/// relay's send path; if one is changed the other must be.
-const BOUNCE_MAILBOX: &str = "bounces";
-
 /// Where the relay answers SMTP, read the same way the send path reads it.
 fn relay_endpoint() -> (String, u16) {
     let host = std::env::var("RELAY_HOST").unwrap_or_else(|_| "127.0.0.1".into());
@@ -353,14 +348,16 @@ pub async fn run_due_checks(pool: &PgPool, resolver: &TokioAsyncResolver) -> any
         };
         let mut result = dnscheck::evaluate(&expected, &observed);
 
-        // Only for domains that are supposed to receive bounces at all.
-        // A null expected MX already means "never receives bounces", so
-        // asking would be inventing a verdict for a domain that wants
-        // none.
-        if expected.mx.is_some() {
+        // Only for domains that are supposed to receive bounces at all,
+        // and only when there IS a bounce mailbox to ask about. A null
+        // expected MX already means "never receives bounces"; an empty
+        // BOUNCE_MAILBOX means the envelope follows `From:` and no
+        // bounces@ address is used. Either way a verdict would be
+        // invented, and the same accessor the send path uses is what
+        // keeps the question and the practice pointed at one address.
+        if let (Some(mailbox), true) = (crate::bounce_mailbox(), expected.mx.is_some()) {
             let (host, port) = relay_endpoint();
-            result.bounce = match probe_bounce_mailbox(&host, port, &d.domain, BOUNCE_MAILBOX).await
-            {
+            result.bounce = match probe_bounce_mailbox(&host, port, &d.domain, &mailbox).await {
                 Some((bounce, control)) => dnscheck::check_bounce_mailbox(bounce, control),
                 // Unreachable relay is our outage; record nothing.
                 None => None,
