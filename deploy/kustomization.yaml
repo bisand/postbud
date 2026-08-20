@@ -38,7 +38,7 @@ resources:
 images:
   - name: postbud
     newName: ghcr.io/bisand/postbud
-    newTag: v0.15.0
+    newTag: v0.16.0
   - name: postbud-queue-report
     newName: ghcr.io/bisand/postbud-queue-report
     newTag: v0.11.2
