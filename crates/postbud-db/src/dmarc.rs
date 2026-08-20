@@ -99,6 +99,9 @@ pub struct DomainSummary {
     /// The policy the most recent report saw published. Not read from
     /// DNS -- this is what a receiver says it applied.
     pub policy: Option<String>,
+    /// What the reported traffic says about this domain's authentication,
+    /// and whether there is enough of it to say anything.
+    pub alignment: postbud_core::dmarc::Alignment,
 }
 
 /// A roll-up for the operator, not for a decision.
@@ -127,7 +130,10 @@ pub async fn summary(pool: &PgPool) -> anyhow::Result<Vec<DomainSummary>> {
 
     rows.into_iter()
         .map(|row| {
+            let messages: i64 = row.try_get("messages")?;
+            let passed: i64 = row.try_get("passed")?;
             Ok(DomainSummary {
+                alignment: postbud_core::dmarc::alignment(messages, passed),
                 domain: row.try_get("domain")?,
                 reports: row.try_get("reports")?,
                 reporters: row.try_get("reporters")?,

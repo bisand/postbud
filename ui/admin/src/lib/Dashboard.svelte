@@ -88,6 +88,24 @@
       </div>
     {/if}
 
+    <!-- A working channel can carry bad news, so this is separate from
+         the silence card below: that one says reports are arriving, this
+         says what they contain. -->
+    {#if data.dmarc_failing.length > 0}
+      <div class="alert alert-warning text-sm py-2">
+        <div>
+          <span class="font-semibold">
+            Mail is failing DMARC for {data.dmarc_failing.join(", ")}.
+          </span>
+          Check which SOURCE is failing before treating it as a fault — mail
+          forwarded by a list fails alignment normally, and mail forged by a
+          stranger fails exactly as it should. The
+          <a class="link" href="#dmarc">DMARC tab</a> breaks it down per sending
+          address.
+        </div>
+      </div>
+    {/if}
+
     <!-- Shown whatever the verdict, including "cannot tell". A check that
          only appears when it is unhappy leaves an operator unable to
          distinguish "healthy" from "not running". -->

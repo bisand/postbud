@@ -40,6 +40,20 @@
     else detail = null;
   });
 
+  // A pass rate is a number; this is what the number is worth. A domain
+  // with three clean messages is not healthy, it is quiet -- and one with
+  // two failures out of three is not broken, it is arithmetic.
+  const alignmentBadge = {
+    passing: "badge-success",
+    inconclusive: "badge-ghost",
+    failing: "badge-warning",
+  };
+  const alignmentLabel = {
+    passing: "passing",
+    inconclusive: "too early to say",
+    failing: "failing",
+  };
+
   const pct = (passed, total) => (total > 0 ? (100 * passed) / total : 0);
 
   function rateClass(rate, total) {
@@ -113,6 +127,16 @@
       </div>
     </div>
 
+    {#if rows?.some((d) => d.alignment.state === "failing")}
+      <div class="alert alert-warning text-sm py-2">
+        <div>
+          {#each rows.filter((d) => d.alignment.state === "failing") as d}
+            <div><span class="font-mono font-semibold">{d.domain}</span> — {d.alignment.detail}</div>
+          {/each}
+        </div>
+      </div>
+    {/if}
+
     {#if !rows}
       <span class="loading loading-spinner"></span>
     {:else if rows.length === 0}
@@ -134,6 +158,7 @@
               <th>Policy</th>
               <th class="text-right">Messages</th>
               <th class="text-right">DMARC pass</th>
+              <th>Verdict</th>
               <th>Seen</th>
             </tr>
           </thead>
@@ -156,6 +181,14 @@
                 <td class="text-right tabular-nums">{d.messages}</td>
                 <td class="text-right tabular-nums font-semibold {rateClass(rate, d.messages)}">
                   {rate.toFixed(1)}%
+                </td>
+                <td>
+                  <span
+                    class="badge badge-sm {alignmentBadge[d.alignment.state] ?? ''}"
+                    title={d.alignment.detail}
+                  >
+                    {alignmentLabel[d.alignment.state] ?? d.alignment.state}
+                  </span>
                 </td>
                 <td class="text-xs opacity-60 whitespace-nowrap">
                   {fmtTime(d.first_seen)} – {fmtTime(d.last_seen)}

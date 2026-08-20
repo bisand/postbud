@@ -655,3 +655,150 @@ mod tests {
         assert!(parse(b"<html><body>hello</body></html>").is_err());
     }
 }
+
+/// How much of a domain's reported mail authenticated, and whether that
+/// is worth anyone's attention.
+///
+/// Deliberately a separate judgement from "are reports arriving at all"
+/// (see [`crate::silence`]). That one asks whether the channel works;
+/// this asks what the channel is saying.
+///
+/// The care needed here is different too. A bounce arriving is
+/// unambiguous good news, but a DMARC failure is not unambiguous bad
+/// news, for two reasons that pull in opposite directions:
+///
+/// - **Forwarding breaks alignment.** A mailing list rewrites the
+///   envelope and often the body, so SPF stops aligning and DKIM may
+///   break. Those failures are somebody else's relay behaving normally,
+///   not a misconfiguration, and a domain that mails lists will always
+///   show some.
+/// - **Forged mail fails too, and is supposed to.** A spammer sending as
+///   your domain produces exactly the failures DMARC exists to produce.
+///   Reading that as an outage would raise an alarm for the system
+///   working.
+///
+/// Which is why this points at the per-source table rather than
+/// pronouncing a cause: the source address is what separates "our relay
+/// broke" from "a stranger is forging us", and only a human reading it
+/// can tell.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum Alignment {
+    Passing { detail: String },
+    Inconclusive { detail: String },
+    Failing { detail: String },
+}
+
+impl Alignment {
+    pub fn is_failing(&self) -> bool {
+        matches!(self, Alignment::Failing { .. })
+    }
+}
+
+/// Failing messages below which a rate is arithmetic rather than
+/// evidence. Two failures out of three is 67% and means nothing at all.
+pub const MIN_FAILURES: i64 = 10;
+
+/// ...and the share they must also reach. Forwarding alone can account
+/// for a few percent on a domain that mails lists, so a floor under that
+/// would flag correct configurations for ever.
+pub const FAIL_RATE_FLOOR: f64 = 5.0;
+
+/// Messages below which "everything passed" is not yet a claim worth
+/// making. A clean five messages is not a healthy domain, it is five
+/// messages.
+pub const MIN_FOR_HEALTH: i64 = 50;
+
+pub fn alignment(messages: i64, passed: i64) -> Alignment {
+    let failed = (messages - passed).max(0);
+    let rate = if messages > 0 {
+        100.0 * failed as f64 / messages as f64
+    } else {
+        0.0
+    };
+
+    // Checked first, and on BOTH counts. Ten failures is meaningful even
+    // on a small domain, and a rate alone is not meaningful on any.
+    if failed >= MIN_FAILURES && rate >= FAIL_RATE_FLOOR {
+        return Alignment::Failing {
+            detail: format!(
+                "{failed} of {messages} messages did not authenticate ({rate:.1}%). \
+                 Check WHICH source is failing before treating this as a fault: \
+                 mail forwarded by a list fails alignment normally, and mail forged \
+                 by a stranger fails exactly as it should"
+            ),
+        };
+    }
+    if messages < MIN_FOR_HEALTH {
+        return Alignment::Inconclusive {
+            detail: format!(
+                "{messages} message(s) reported; too few to call the domain healthy \
+                 either way"
+            ),
+        };
+    }
+    Alignment::Passing {
+        detail: match failed {
+            0 => format!("all {messages} reported messages authenticated"),
+            n => format!(
+                "{n} of {messages} did not authenticate ({rate:.1}%), within normal forwarding loss"
+            ),
+        },
+    }
+}
+
+#[cfg(test)]
+mod alignment_tests {
+    use super::*;
+
+    /// The production shape at the time this was written: small domains,
+    /// everything passing. Honest answer is that it is too early to call
+    /// them healthy, not that they are.
+    #[test]
+    fn a_handful_of_clean_messages_is_not_yet_health() {
+        assert!(matches!(alignment(31, 31), Alignment::Inconclusive { .. }));
+        assert!(matches!(alignment(2, 2), Alignment::Inconclusive { .. }));
+    }
+
+    #[test]
+    fn a_domain_with_real_volume_and_no_failures_is_passing() {
+        assert!(matches!(alignment(500, 500), Alignment::Passing { .. }));
+    }
+
+    /// Forwarding loss must not be an alarm. A domain that mails lists
+    /// carries a few percent of failures for ever, and flagging that
+    /// teaches an operator to ignore the flag.
+    #[test]
+    fn a_few_percent_of_forwarding_loss_is_not_an_alarm() {
+        // 2% -- under the floor.
+        assert!(matches!(alignment(1000, 980), Alignment::Passing { .. }));
+    }
+
+    #[test]
+    fn a_real_authentication_break_is_flagged() {
+        let a = alignment(1000, 500);
+        assert!(a.is_failing());
+        let Alignment::Failing { detail } = a else {
+            unreachable!()
+        };
+        // It must send the reader to the source table rather than name a
+        // cause it cannot know.
+        assert!(detail.contains("WHICH source"));
+    }
+
+    /// A rate on its own is arithmetic. Both gates have to clear.
+    #[test]
+    fn a_high_rate_on_almost_no_mail_is_not_an_alarm() {
+        // 67% failing, but only two messages.
+        assert!(!alignment(3, 1).is_failing());
+        // Nine failures: meaningful-ish rate, not yet a meaningful count.
+        assert!(!alignment(20, 11).is_failing());
+        // The tenth failure is what makes it evidence.
+        assert!(alignment(20, 10).is_failing());
+    }
+
+    #[test]
+    fn no_reports_at_all_says_nothing() {
+        assert!(matches!(alignment(0, 0), Alignment::Inconclusive { .. }));
+    }
+}

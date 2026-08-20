@@ -162,7 +162,14 @@ reputation checklist in [docs/dns.md](docs/dns.md).
   client would otherwise starve the poller of every report they had
   looked at. Mail that is not a report is counted apart from mail that
   would not parse: only the second is a problem. `dmarc-import` reads
-  files for backfill, `dmarc-fetch` makes one pass by hand. The admin
+  files for backfill, `dmarc-fetch` makes one pass by hand. A domain's
+  reported traffic also gets a verdict (`dmarc::alignment`): failing needs
+  BOTH a meaningful count and a meaningful share, because forwarding
+  through a list loses a few percent for ever and a rate on three
+  messages is arithmetic. It never names a cause -- forged mail fails
+  exactly as DMARC intends -- so the wording sends the reader to the
+  per-source table, the only thing that separates "our relay broke" from
+  "a stranger is forging us". The admin
   page (`/admin` -> DMARC) is READ-ONLY for every role -- there is no
   mutating endpoint and there must never be one. It leads with which
   mechanism carried DMARC rather than the pass rate, because a domain

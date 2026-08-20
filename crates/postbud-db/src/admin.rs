@@ -58,6 +58,10 @@ pub struct Overview {
     /// The same question for aggregate reports, which arrive on a
     /// schedule rather than in proportion to volume.
     pub dmarc_path: silence::Signal,
+    /// Domains whose reported mail is failing to authenticate. Separate
+    /// from `dmarc_path`, which only says whether reports arrive at all:
+    /// a channel can be working perfectly and carrying bad news.
+    pub dmarc_failing: Vec<String>,
     /// Bounce reports the parser could not join to a message. A persistently
     /// rising number means queue ids are not being captured on the way out.
     /// Bounces from the last 7 days that could not be joined to a
@@ -174,6 +178,12 @@ pub async fn overview(pool: &PgPool) -> anyhow::Result<Overview> {
         unmatched_bounces: counters.get("unmatched_bounces"),
         bounce_path: silence::bounce_signal(counters.get("sent_30d"), counters.get("bounces_30d")),
         dmarc_path: silence::dmarc_signal(counters.get("report_age_days")),
+        dmarc_failing: crate::dmarc::summary(pool)
+            .await?
+            .into_iter()
+            .filter(|d| d.alignment.is_failing())
+            .map(|d| d.domain)
+            .collect(),
     })
 }
 
