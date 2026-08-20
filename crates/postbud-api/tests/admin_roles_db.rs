@@ -73,12 +73,10 @@ async fn call(
 #[tokio::test]
 async fn a_viewer_reads_everything_and_changes_nothing() {
     dotenvy::dotenv().ok();
-    let Ok(url) = std::env::var("DATABASE_URL") else {
-        eprintln!("skipping: DATABASE_URL is not set");
+    dotenvy::dotenv().ok();
+    let Some(pool) = postbud_db::testsupport::pool_or_skip("admin_roles_db").await else {
         return;
     };
-    let pool = postbud_db::connect(&url).await.expect("connecting");
-    postbud_db::migrate(&pool).await.expect("migrating");
 
     let (pem, jwks) = keys();
     let oidc = postbud_api::oidc::OidcAdmin::with_static_jwks(ISSUER, CLIENT_ID, &[], &jwks)

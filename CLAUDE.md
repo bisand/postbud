@@ -231,6 +231,10 @@ Deployed and verified end to end: submit → deliver → bounce → suppress,
 SPF/DKIM/DMARC passing at the major receivers, admin surface
 browser-verified, SMTP submission closed to everything but the worker.
 
-**Not built yet:** DB-backed integration tests that skip politely without
-`DATABASE_URL` (only the admin-auth tests run DB-free today), and inbound
-mail (see README "Not built").
+DB-backed tests skip politely when there is no database to reach
+(`postbud_db::testsupport::pool_or_skip`) -- but NEVER in CI, where a skip
+is not politeness, it is the suite quietly shrinking to the tests that
+need nothing and passing green. Note the skip is silent unless
+`-- --nocapture`, since cargo captures the output of tests that pass.
+
+**Not built yet:** inbound mail (see README "Not built").

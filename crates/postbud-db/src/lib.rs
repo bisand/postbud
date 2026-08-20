@@ -19,6 +19,9 @@ pub mod relay;
 pub mod relayqueue;
 pub mod suppression;
 pub mod tenant;
+/// Test support for the workspace's DB-backed tests. Public because they
+/// live in other crates, and must all make the same skip-or-fail call.
+pub mod testsupport;
 
 use anyhow::Context;
 use sqlx::postgres::{PgPool, PgPoolOptions};

@@ -17,13 +17,7 @@ use uuid::Uuid;
 
 async fn pool() -> Option<sqlx::PgPool> {
     dotenvy::dotenv().ok();
-    let Ok(url) = std::env::var("DATABASE_URL") else {
-        eprintln!("skipping: DATABASE_URL is not set");
-        return None;
-    };
-    let pool = postbud_db::connect(&url).await.expect("connecting");
-    postbud_db::migrate(&pool).await.expect("migrating");
-    Some(pool)
+    postbud_db::testsupport::pool_or_skip("queue_db").await
 }
 
 async fn tenant(pool: &sqlx::PgPool) -> Uuid {
