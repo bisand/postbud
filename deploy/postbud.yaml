@@ -35,6 +35,19 @@ spec:
       labels:
         app: postbud-api
     spec:
+      # ndots:1 so a fully-qualified cluster name is tried as written
+      # rather than run through the search list first. Kubernetes
+      # defaults to ndots:5, which sends a four-label name like
+      # <svc>.<ns>.svc.cluster.local through every search domain before
+      # trying it absolute -- and the node's own search domain is one of
+      # them. An upstream resolver that stops answering then turns a
+      # purely internal lookup into EAI_AGAIN: the stub resolver gives up
+      # on the first timeout and never reaches the name that would have
+      # resolved, so the database looks unreachable while it is fine.
+      dnsConfig:
+        options:
+          - name: ndots
+            value: "1"
       initContainers:
         # Idempotent, and running it on every rollout means a deploy can
         # never reach a pod whose schema is older than its code.
@@ -101,6 +114,11 @@ spec:
       labels:
         app: postbud-worker
     spec:
+      # ndots:1, for the reason spelled out under postbud-api above.
+      dnsConfig:
+        options:
+          - name: ndots
+            value: "1"
       containers:
         - name: worker
           image: postbud
@@ -181,6 +199,11 @@ spec:
     spec:
       template:
         spec:
+          # ndots:1, for the reason spelled out under postbud-api above.
+          dnsConfig:
+            options:
+              - name: ndots
+                value: "1"
           restartPolicy: OnFailure
           containers:
             - name: purge
