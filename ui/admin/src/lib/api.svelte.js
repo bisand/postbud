@@ -41,15 +41,12 @@ let refreshing = null;
 // there is no session to save; then, and only then, does the user log in
 // again.
 //
-// shortcut: inert until the issuer deploys the other half. Measured
-// 2026-10-31: its refresh grant answered 200 with access_token,
-// expires_in, scope and token_type and NO id_token -- the credential
-// postbud authenticates with -- so every refresh failed at the check
-// below and the user still met the login gate. The issuer side is
-// written (it now reissues an id_token from that grant) and this works
-// unchanged once that is released; nothing here needs altering. The
-// issuer does rotate on refresh, so the replacement cookie and the 400
-// retry are live paths, not speculation.
+// The id_token check below is not defensive padding. An issuer may
+// legally answer a refresh grant with an access token alone (OIDC Core
+// §12.1), and one did: for a day after the cookie half shipped, every
+// refresh here returned 200 and nothing usable, and the operator met
+// the login gate on each reload with nothing in any log to say why.
+// Fixed at the issuer; this side never needed altering.
 export function refreshSession() {
   if (refreshing) return refreshing;
   refreshing = (async () => {

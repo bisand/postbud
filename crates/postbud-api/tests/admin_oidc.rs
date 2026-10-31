@@ -167,17 +167,18 @@ async fn env_allowlist_matches_email_case_insensitively_and_sub_exactly() {
 /// the refresh grant: a refresh token can be spent exactly once, and the
 /// answer carries its replacement.
 ///
-/// The rotation half matches the issuer deployed against. The id_token
-/// did NOT: that issuer answered the refresh grant without one, which
-/// made the keep-alive inert and is fixed at the issuer rather than here
-/// (docs/architecture.md §9). The mock was modelled on a sibling
-/// project's, whose portal authenticates with the access token and so
-/// never needed that field -- which is how these tests passed against a
-/// world one field different from the real one. They pin the SERVER's
-/// half of the contract: the refresh token never reaching the page, the
+/// Both halves now match the issuer deployed against -- but the id_token
+/// did not when these tests were written, and they passed anyway. The
+/// mock was modelled on a sibling project's, whose portal authenticates
+/// with the access token and so never needed that field, so it answered
+/// the refresh grant with an id_token while the real issuer did not, and
+/// the keep-alive shipped unable to work (docs/architecture.md §9).
+/// The lesson is in what these tests are FOR: the SERVER's half of the
+/// contract -- the refresh token never reaching the page, the
 /// replacement reaching the cookie, reuse refused without leaking the
-/// issuer's detail. The end-to-end session is not something a mock can
-/// settle. Serves discovery too, so `oidc.discovery()` finds the
+/// issuer's detail. A mock cannot settle the end-to-end session,
+/// because a mock is written from the same belief as the code.
+/// Serves discovery too, so `oidc.discovery()` finds the
 /// token endpoint the way it does in production — nothing is hardcoded.
 /// Returns the base URL.
 async fn mock_issuer() -> String {

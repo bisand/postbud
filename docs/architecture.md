@@ -316,18 +316,22 @@ tailnet, not TLS, is the confidentiality boundary: a deployment
 property, not an oversight. Serving the admin over TLS (below) gets the
 stronger flag automatically.
 
-**Inert until the issuer deploys its half.** Measured 2026-10-31: that
-issuer's refresh grant answered 200 with `access_token`, `expires_in`,
-`scope` and `token_type` and no `id_token` — and the id_token is what
-postbud authenticates API calls with, so a refresh returned nothing
-usable, the boot refresh got its 200 and the login gate appeared anyway.
-`scope` already comes back as `openid profile email`, so this was never a
-missing scope on the request; that issuer simply did not mint an
-id_token on that grant. The fix is there, not here, and is written: an
-`openid` refresh now reissues an `id_token`, after which everything
-described above works with no change on this side. Authenticating with
-the access token instead would mean validating access tokens
-server-side, a larger change than this one.
+**It depends on the issuer reissuing an `id_token`, which is not
+guaranteed.** OIDC Core §12.1 permits a refresh grant to answer with an
+access token alone, and an issuer that does costs nothing visible: the
+boot refresh gets its 200, postbud finds no credential it can
+authenticate with, and the login gate appears anyway. That is why
+`refreshSession` treats a 200 without an `id_token` as a failed refresh
+rather than a success — there is no honest alternative short of
+validating access tokens server-side, a larger change than this one.
+This was not hypothetical: it was the deployed behaviour when the cookie
+half shipped, measured 2026-10-31, and every refresh failed that check
+for a day. `scope` already came back as `openid profile email`, so it was
+never a missing scope on the request; the issuer simply did not mint an
+id_token on that grant. Fixed where it belonged, at the issuer, and live
+since 2026-11-01 — verified against the deployment rather than a mock:
+the refresh endpoint answers with `id_token` present and `refresh_token`
+absent, and the admin survives a reload.
 
 The issuer **does** rotate on the refresh grant — it revokes the token
 presented and returns its replacement — so the rotated cookie here and
@@ -337,10 +341,11 @@ leaves only in `Set-Cookie`, never in the body, so spending the cookie
 repeatedly from JavaScript looks exactly like a non-rotating issuer. It
 is the cookie jar carrying each new value.
 
-Until the issuer ships, the deployed state keeps the cookie half and
-costs a reload: nothing is stored in the page, so reloading signs the
-operator out, where the previous `sessionStorage` behaviour survived it.
-That is a knowing trade, not an oversight.
+The window where only the cookie half worked is worth remembering for
+what it cost: nothing was stored in the page, so a reload signed the
+operator out, where the previous `sessionStorage` behaviour had survived
+it. A feature can be complete on this side and still deliver a
+regression, and no test here could have said so.
 
 Two further honest limits. The issuer's `end_session` does not revoke the
 refresh token, so a token already stolen dies when it expires; clearing
