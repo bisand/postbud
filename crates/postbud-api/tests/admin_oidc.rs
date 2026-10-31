@@ -163,9 +163,17 @@ async fn env_allowlist_matches_email_case_insensitively_and_sub_exactly() {
 
 // ------------------------------------------- the refresh token's cookie
 
-/// A stand-in for the issuer that ROTATES like the real one: a refresh
-/// token can be spent exactly once, and the answer carries its
-/// replacement. Serves discovery too, so `oidc.discovery()` finds the
+/// A stand-in for the issuer that ROTATES, and reissues an id_token from
+/// the refresh grant: a refresh token can be spent exactly once, and the
+/// answer carries its replacement.
+///
+/// Both of those are what a spec-compliant issuer MAY do and what this
+/// code is written for; neither is what the issuer deployed against
+/// currently does (docs/architecture.md §9). So these tests pin the
+/// SERVER's half of the contract -- the refresh token never reaching the
+/// page, the replacement reaching the cookie, reuse refused without
+/// leaking the issuer's detail -- and not the end-to-end session, which
+/// no mock can settle. Serves discovery too, so `oidc.discovery()` finds the
 /// token endpoint the way it does in production — nothing is hardcoded.
 /// Returns the base URL.
 async fn mock_issuer() -> String {

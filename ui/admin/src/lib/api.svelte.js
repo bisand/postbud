@@ -40,6 +40,19 @@ let refreshing = null;
 // Trades the refresh cookie for a fresh id_token. Answers false when
 // there is no session to save; then, and only then, does the user log in
 // again.
+//
+// shortcut: INERT against the issuer this is deployed with. Measured
+// 2026-10-31: its refresh grant answers 200 with access_token,
+// expires_in, scope and token_type and NO id_token -- which is the
+// credential postbud authenticates with -- so every refresh here fails
+// at the check below and the user still meets the login gate. The same
+// answer carries no replacement refresh token either, and the token is
+// reusable, so the rotation handling (the 400 retry, the rotated cookie
+// server-side) is untested against reality: rotation happens on the
+// authorization_code grant, not this one. Upgrade when the issuer
+// reissues an id_token from the refresh grant, after which nothing here
+// needs changing; the alternative is authenticating API calls with the
+// access token, which means validating those server-side.
 export function refreshSession() {
   if (refreshing) return refreshing;
   refreshing = (async () => {

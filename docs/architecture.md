@@ -316,7 +316,28 @@ tailnet, not TLS, is the confidentiality boundary: a deployment
 property, not an oversight. Serving the admin over TLS (below) gets the
 stronger flag automatically.
 
-Two honest limits. The issuer's `end_session` does not revoke the
+**Inert against the issuer currently configured.** Measured 2026-10-31:
+that issuer's refresh grant answers 200 with `access_token`,
+`expires_in`, `scope` and `token_type` and no `id_token` — and the
+id_token is what postbud authenticates API calls with, so a refresh
+returns nothing usable, the boot refresh gets its 200 and the login gate
+appears anyway. `scope` already comes back as `openid profile email`, so
+this is not a missing scope on the request. The same answer carries no
+replacement refresh token, and the token is reusable, so this issuer does
+not rotate on the refresh grant either — rotation is on the
+`authorization_code` grant, one per login — which leaves the rotated
+cookie and the browser's 400 retry correct but unexercised. The fix
+belongs at the issuer: reissue an `id_token` from the refresh grant and
+this works as described with no change here. Authenticating with the
+access token instead would mean validating access tokens server-side,
+which is a larger change than this.
+
+Until then the deployed state keeps the cookie half and costs a reload:
+nothing is stored in the page, so reloading signs the operator out, where
+the previous `sessionStorage` behaviour survived it. That is a knowing
+trade, not an oversight.
+
+Two further honest limits. The issuer's `end_session` does not revoke the
 refresh token, so a token already stolen dies when it expires; clearing
 the cookie is all this side controls, and a revoke route belongs at the
 issuer. And `ADMIN_TOKEN` is a static credential with no refresh behind
