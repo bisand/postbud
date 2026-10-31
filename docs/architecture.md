@@ -275,8 +275,53 @@ Authentication has two independent paths:
 
 With neither configured the surface answers an honest 503. The API port
 should never be on the public internet (firewall it to a private
-network); these credentials are defence in depth, not the only wall. The
-UI keeps its credential in sessionStorage — it dies with the tab.
+network); these credentials are defence in depth, not the only wall.
+
+**Keeping the session alive.** The issuer hands out a long-lived,
+rotating refresh token on every code exchange. The proxy KEEPS it: it is
+split out of the issuer's answer and returned as an HttpOnly cookie
+(`Path=/admin/api/oidc`, `SameSite=Strict`), and `POST
+/admin/api/oidc/refresh` is the only way to spend it — no request body,
+the credential is the cookie. The id_token itself lives in a module
+variable in the page and nowhere else. localStorage and sessionStorage
+are equally open to an XSS (same origin, same JavaScript); what matters
+is not the store but the LIFETIME of what sits in it, and a page that
+can only spend the hour already running cannot mint itself a month. The
+browser refreshes once on boot (nothing survives a reload in memory, so
+the cookie is what says a session exists) and once on a 401, sharing one
+in-flight exchange per tab so concurrent calls do not spend the cookie
+several times. The route answers 401 when there is no cookie (do not
+retry) and 400 when the issuer refused one (the rotation race between
+two tabs — retry once), and it never passes the issuer's error body
+through, because a reused-token error names the token.
+`POST /admin/api/oidc/logout` clears the cookie, which sign-out awaits
+before handing the navigation to the issuer: without it the refresh
+token outlives the logout and the next visit signs the user back in, on
+a shared machine as whoever was there before.
+
+The cookie's `Max-Age` is 12 hours (`REFRESH_COOKIE_MAX_AGE` in
+`oidc.rs`), well short of what the issuer would allow — long enough for a
+working day, short enough not to carry the session overnight. That bound
+is what pays for the session now surviving a closed tab, which the old
+sessionStorage behaviour deliberately did not allow.
+
+`Secure` is set when the request actually arrived over TLS
+(`X-Forwarded-Proto`), and not otherwise. This is **weaker** than setting
+it unconditionally, and it has to be: the admin surface is legitimately
+served over plain HTTP on a private network — the hand-rolled SHA-256 in
+`ui/admin/src/lib/oidc.js` exists for exactly that reason — and a
+`Secure` cookie is never stored over plain HTTP on a non-loopback host,
+so an unconditional flag would mean nobody could log in at all. Here the
+tailnet, not TLS, is the confidentiality boundary: a deployment
+property, not an oversight. Serving the admin over TLS (below) gets the
+stronger flag automatically.
+
+Two honest limits. The issuer's `end_session` does not revoke the
+refresh token, so a token already stolen dies when it expires; clearing
+the cookie is all this side controls, and a revoke route belongs at the
+issuer. And `ADMIN_TOKEN` is a static credential with no refresh behind
+it: a break-glass session acquires no cookie, the refresh route answers
+it 401, and it must be typed again after a reload.
 
 **Serving it over TLS on a private network.** The plain HTTP port stays
 reachable from the private network as the break-glass path, and a

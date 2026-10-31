@@ -72,6 +72,8 @@ pub fn router() -> Router<AppState> {
         .route("/admin/api/users/{id}", axum::routing::delete(user_end))
         .route("/admin/api/config", get(crate::oidc::config))
         .route("/admin/api/oidc/token", post(crate::oidc::exchange))
+        .route("/admin/api/oidc/refresh", post(crate::oidc::refresh))
+        .route("/admin/api/oidc/logout", post(crate::oidc::logout))
 }
 
 // ------------------------------------------------------------------- auth

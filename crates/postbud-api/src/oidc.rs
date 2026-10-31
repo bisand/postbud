@@ -15,6 +15,11 @@
 //! expiry are checked against the issuer's JWKS, and its `sub`/`email`
 //! must be on the allowlist.
 //!
+//! The proxy also KEEPS the refresh token the issuer hands out: it goes
+//! back as an HttpOnly cookie, and `POST /admin/api/oidc/refresh` spends
+//! it, so a long-lived credential never exists anywhere JavaScript can
+//! reach it and an expired id_token does not mean a new login.
+//!
 //! `ADMIN_TOKEN` remains valid alongside — the break-glass path. An IdP
 //! outage must not lock the operator out of their own mail admin.
 
@@ -22,7 +27,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, anyhow};
 use axum::extract::State;
-use axum::{Json, http::StatusCode, response::IntoResponse};
+use axum::{Json, http::StatusCode, response::IntoResponse, response::Response};
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header, jwk::JwkSet};
 use serde::Deserialize;
 use tokio::sync::RwLock;
@@ -273,10 +278,15 @@ pub struct ExchangeRequest {
 /// optional client secret stays out of the browser. The issuer's error
 /// body is passed through on failure: "invalid_grant" in the console
 /// beats "400" with no explanation.
+///
+/// On SUCCESS the answer is not passed through verbatim: the refresh
+/// token is removed and returned as an HttpOnly cookie instead (see
+/// [`REFRESH_COOKIE`]).
 pub async fn exchange(
     State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
     Json(req): Json<ExchangeRequest>,
-) -> ApiResult<impl IntoResponse> {
+) -> ApiResult<Response> {
     let Some(oidc) = &state.admin_oidc else {
         return Err(ApiError::AdminDisabled);
     };
@@ -305,19 +315,208 @@ pub async fn exchange(
         .await
         .map_err(|e| ApiError::Internal(anyhow!("token endpoint: {e}")))?;
 
-    let status = if upstream.status().is_success() {
-        StatusCode::OK
-    } else {
-        StatusCode::BAD_REQUEST
-    };
+    let ok = upstream.status().is_success();
     let body = upstream
         .text()
         .await
         .map_err(|e| ApiError::Internal(anyhow!("reading token response: {e}")))?;
+    if !ok {
+        return Ok((
+            StatusCode::BAD_REQUEST,
+            [(axum::http::header::CONTENT_TYPE, "application/json")],
+            body,
+        )
+            .into_response());
+    }
 
-    Ok((
-        status,
+    // The refresh token is split off into an HttpOnly cookie rather than
+    // handed to the page; everything else goes through as it came.
+    let (body, cookie) = split_refresh_token(&headers, &body)?;
+    let mut response = (
         [(axum::http::header::CONTENT_TYPE, "application/json")],
         body,
-    ))
+    )
+        .into_response();
+    if let Some(cookie) = cookie {
+        response.headers_mut().insert(
+            axum::http::header::SET_COOKIE,
+            cookie
+                .parse()
+                .map_err(|_| ApiError::Internal(anyhow!("unusable refresh token from issuer")))?,
+        );
+    }
+    Ok(response)
+}
+
+// ------------------------------------------------- the refresh cookie
+
+/// The issuer hands out a long-lived refresh token on every code
+/// exchange. It never reaches JavaScript: it is split off here and sent
+/// back as an HttpOnly cookie, so an XSS can spend the hour already
+/// running and cannot mint itself another session. This proxy is already
+/// the only code that talks to the token endpoint, so it is also the
+/// natural keeper.
+const REFRESH_COOKIE: &str = "postbud_admin_refresh";
+
+/// How long the cookie — and therefore the session — may live. The
+/// issuer's own refresh token lives far longer; a mail admin console
+/// does not need that. Twelve hours covers a working day without
+/// carrying the session overnight.
+const REFRESH_COOKIE_MAX_AGE: i64 = 12 * 3600;
+
+/// `Secure` only when the request actually arrived over TLS.
+///
+/// This is WEAKER than deriving it from the hostname: the day a proxy
+/// stops setting `X-Forwarded-Proto` the attribute silently disappears.
+/// postbud cannot do better. The admin surface is legitimately served
+/// over plain HTTP on a private network — the hand-rolled SHA-256 in
+/// ui/admin/src/lib/oidc.js exists because `crypto.subtle` needs a
+/// secure context — and a `Secure` cookie is never stored over plain
+/// HTTP on a non-loopback host, so setting it unconditionally would mean
+/// nobody could log in at all. Here the tailnet, not TLS, is the
+/// confidentiality boundary: a deployment property, not an oversight.
+fn arrived_over_tls(headers: &axum::http::HeaderMap) -> bool {
+    headers
+        .get("x-forwarded-proto")
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|proto| {
+            proto
+                .split(',')
+                .next()
+                .is_some_and(|first| first.trim().eq_ignore_ascii_case("https"))
+        })
+}
+
+/// `Path=/admin/api/oidc` so only the two routes that spend the cookie
+/// ever see it; `SameSite=Strict` because both are POSTed by our own
+/// page.
+fn refresh_cookie(headers: &axum::http::HeaderMap, value: &str, max_age: i64) -> String {
+    let secure = if arrived_over_tls(headers) {
+        " Secure;"
+    } else {
+        ""
+    };
+    format!(
+        "{REFRESH_COOKIE}={value}; Path=/admin/api/oidc; Max-Age={max_age}; \
+         HttpOnly;{secure} SameSite=Strict"
+    )
+}
+
+fn cookie_value(headers: &axum::http::HeaderMap, name: &str) -> Option<String> {
+    headers
+        .get(axum::http::header::COOKIE)?
+        .to_str()
+        .ok()?
+        .split(';')
+        .find_map(|c| {
+            c.trim()
+                .strip_prefix(name)?
+                .strip_prefix('=')
+                .map(str::to_string)
+        })
+}
+
+/// Strip `refresh_token` out of the issuer's answer and turn it into a
+/// `Set-Cookie`. The page gets everything else verbatim.
+fn split_refresh_token(
+    headers: &axum::http::HeaderMap,
+    body: &str,
+) -> Result<(String, Option<String>), ApiError> {
+    let mut parsed: serde_json::Value = serde_json::from_str(body)
+        .map_err(|e| ApiError::Internal(anyhow!("token endpoint returned non-JSON: {e}")))?;
+    let refresh = parsed
+        .as_object_mut()
+        .and_then(|o| o.remove("refresh_token"))
+        .and_then(|v| v.as_str().map(str::to_string));
+    let cookie = refresh.map(|r| refresh_cookie(headers, &r, REFRESH_COOKIE_MAX_AGE));
+    Ok((parsed.to_string(), cookie))
+}
+
+/// `POST /admin/api/oidc/refresh` — spends the refresh cookie so an
+/// expired id_token does not mean a new login. Nothing is read from the
+/// request body: the credential is the cookie, which the page cannot
+/// read, forge or send anywhere else.
+///
+/// 401 means there is no cookie (nobody is logged in here, so do not
+/// retry); 400 means the issuer refused one, which may be the rotation
+/// race between two tabs and is worth one retry. The browser depends on
+/// that distinction.
+///
+/// Unlike [`exchange`], the issuer's error body is NOT passed through: a
+/// reused-token error names the token.
+pub async fn refresh(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+) -> ApiResult<Response> {
+    let Some(oidc) = &state.admin_oidc else {
+        return Err(ApiError::AdminDisabled);
+    };
+    let refresh_token = cookie_value(&headers, REFRESH_COOKIE).ok_or(ApiError::Unauthorized)?;
+    let token_endpoint = oidc
+        .discovery()
+        .await
+        .map_err(ApiError::Internal)?
+        .token_endpoint;
+
+    let mut form = vec![
+        ("grant_type", "refresh_token".to_string()),
+        ("refresh_token", refresh_token),
+        ("client_id", oidc.client_id.clone()),
+    ];
+    if let Some(secret) = &oidc.client_secret {
+        form.push(("client_secret", secret.clone()));
+    }
+
+    let upstream = oidc
+        .http
+        .post(&token_endpoint)
+        .form(&form)
+        .send()
+        .await
+        .map_err(|e| ApiError::Internal(anyhow!("token endpoint: {e}")))?;
+    let status = upstream.status();
+    let body = upstream
+        .text()
+        .await
+        .map_err(|e| ApiError::Internal(anyhow!("reading token response: {e}")))?;
+    if !status.is_success() {
+        eprintln!("postbud: admin token refresh refused ({status}): {body}");
+        return Err(ApiError::BadRequest(
+            "the issuer refused the session".into(),
+        ));
+    }
+
+    // The issuer ROTATES: the token just spent is dead and the answer
+    // carries its replacement. Dropping it would log the user out when
+    // the new access token expires, with nothing in any log to say why.
+    let (body, cookie) = split_refresh_token(&headers, &body)?;
+    let mut response = (
+        [(axum::http::header::CONTENT_TYPE, "application/json")],
+        body,
+    )
+        .into_response();
+    if let Some(cookie) = cookie {
+        response.headers_mut().insert(
+            axum::http::header::SET_COOKIE,
+            cookie
+                .parse()
+                .map_err(|_| ApiError::Internal(anyhow!("unusable refresh token from issuer")))?,
+        );
+    }
+    Ok(response)
+}
+
+/// `POST /admin/api/oidc/logout` — drops the refresh cookie. Not
+/// decoration: without it the refresh token outlives the logout and the
+/// next visit signs the user straight back in — on a shared machine, as
+/// whoever was there before.
+pub async fn logout(headers: axum::http::HeaderMap) -> Response {
+    (
+        StatusCode::NO_CONTENT,
+        [(
+            axum::http::header::SET_COOKIE,
+            refresh_cookie(&headers, "", 0),
+        )],
+    )
+        .into_response()
 }

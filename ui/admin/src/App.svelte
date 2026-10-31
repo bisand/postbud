@@ -1,5 +1,5 @@
 <script>
-  import { auth, api, me } from "./lib/api.svelte.js";
+  import { auth, api, me, refreshSession, endSession } from "./lib/api.svelte.js";
   import { fetchConfig, beginLogin, completeLogin, endIssuerSession } from "./lib/oidc.js";
   import { icons } from "./lib/icons.js";
   import { THEMES, themePref, apply as applyTheme } from "./lib/theme.svelte.js";
@@ -67,9 +67,13 @@
   /// is cleared first either way: if the issuer has no end-session
   /// endpoint, or the credential was the static admin token rather than
   /// an OIDC one, signing out must still work.
-  function signOut() {
+  /// The refresh cookie must be dropped BEFORE the issuer takes over the
+  /// navigation — await it, or the browser may leave before the request
+  /// is made and the cookie outlives the sign-out.
+  async function signOut() {
     const idToken = auth.token;
     auth.clear();
+    await endSession();
     if (!endIssuerSession(oidcCfg, idToken)) {
       location.assign("/admin");
     }
@@ -92,8 +96,12 @@
     }
   }
 
-  // On load: finish an OIDC callback if this is one, then learn whether
-  // OIDC is available at all (drives which login button to show).
+  // On load: finish an OIDC callback if this is one; otherwise ask the
+  // refresh cookie whether a session already exists. Nothing survives a
+  // reload in memory, so the cookie is the only thing that can answer —
+  // and on a plain-HTTP deployment it is the only way a reload stays
+  // logged in. Then learn whether OIDC is available at all (drives which
+  // login button to show).
   $effect(() => {
     (async () => {
       try {
@@ -101,6 +109,9 @@
         if (idToken) {
           checking = true;
           auth.set(idToken);
+          await validateSession();
+        } else if (await refreshSession()) {
+          checking = true;
           await validateSession();
         }
       } catch (err) {

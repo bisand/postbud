@@ -160,3 +160,333 @@ async fn env_allowlist_matches_email_case_insensitively_and_sub_exactly() {
     assert!(!oidc.env_allowlisted(&id("USER-42", None)), "sub is exact");
     assert!(!oidc.env_allowlisted(&id("y", Some("other@example.com"))));
 }
+
+// ------------------------------------------- the refresh token's cookie
+
+/// A stand-in for the issuer that ROTATES like the real one: a refresh
+/// token can be spent exactly once, and the answer carries its
+/// replacement. Serves discovery too, so `oidc.discovery()` finds the
+/// token endpoint the way it does in production — nothing is hardcoded.
+/// Returns the base URL.
+async fn mock_issuer() -> String {
+    use std::collections::HashSet;
+    use std::sync::{Arc, Mutex};
+
+    // The tokens still alive, and a counter so an id_token is never
+    // named after the refresh token that bought it — otherwise asserting
+    // "the refresh token is not in the body" matches its own substring.
+    let live: Arc<Mutex<(usize, HashSet<String>)>> = Arc::new(Mutex::new((0, HashSet::new())));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+
+    let discovery = base.clone();
+    let app = axum::Router::new()
+        .route(
+            "/.well-known/openid-configuration",
+            axum::routing::get(move || {
+                let base = discovery.clone();
+                async move {
+                    axum::Json(serde_json::json!({
+                        "authorization_endpoint": format!("{base}/authorize"),
+                        "token_endpoint": format!("{base}/token"),
+                        "jwks_uri": format!("{base}/jwks"),
+                    }))
+                }
+            }),
+        )
+        .route(
+            "/token",
+            axum::routing::post(move |form: String| {
+                let live = live.clone();
+                async move {
+                    let field = |name: &str| {
+                        form.split('&')
+                            .find_map(|p| p.strip_prefix(&format!("{name}=")))
+                            .unwrap_or_default()
+                            .to_string()
+                    };
+                    let mint = || {
+                        let mut live = live.lock().unwrap();
+                        live.0 += 1;
+                        let n = live.0;
+                        live.1.insert(format!("r{n}"));
+                        (
+                            StatusCode::OK,
+                            axum::Json(serde_json::json!({
+                                "access_token": format!("at{n}"),
+                                "token_type": "Bearer",
+                                "expires_in": 3600,
+                                "refresh_token": format!("r{n}"),
+                                "id_token": format!("idt{n}"),
+                            })),
+                        )
+                    };
+                    match field("grant_type").as_str() {
+                        // The login: the issuer hands out the first
+                        // refresh token here, where the cookie is born.
+                        "authorization_code" => mint(),
+                        "refresh_token" => {
+                            let spent = field("refresh_token");
+                            if !live.lock().unwrap().1.remove(&spent) {
+                                // The detail a reused token produces at
+                                // the issuer — it must never reach the
+                                // browser.
+                                return (
+                                    StatusCode::BAD_REQUEST,
+                                    axum::Json(serde_json::json!({
+                                        "error": "invalid_grant",
+                                        "error_description":
+                                            format!("refresh token already used: {spent}"),
+                                    })),
+                                );
+                            }
+                            mint()
+                        }
+                        _ => (
+                            StatusCode::BAD_REQUEST,
+                            axum::Json(serde_json::json!({"error": "unsupported_grant_type"})),
+                        ),
+                    }
+                }
+            }),
+        );
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    base
+}
+
+/// The same router as [`app`], but pointed at a live mock issuer so the
+/// token-endpoint proxy can be exercised end to end.
+fn app_against(issuer: &str, admin_token: Option<&str>) -> axum::Router {
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .acquire_timeout(std::time::Duration::from_secs(2))
+        .connect_lazy("postgres://nobody@127.0.0.1:9/nothing")
+        .expect("lazy pool");
+    let oidc = postbud_api::oidc::OidcAdmin::with_static_jwks(issuer, CLIENT_ID, &[], &keys().1)
+        .expect("building OidcAdmin");
+    postbud_api::router(postbud_api::AppState {
+        pool,
+        bounce_token: None,
+        admin_token: admin_token.map(String::from),
+        admin_oidc: Some(oidc),
+        spf_default: None,
+    })
+}
+
+/// POSTs one of the OIDC proxy routes (no bearer — these run before
+/// there is a token) and returns the status, the Set-Cookie and the body.
+async fn post_oidc(
+    app: axum::Router,
+    uri: &str,
+    cookie: Option<&str>,
+    forwarded_proto: Option<&str>,
+    body: Option<serde_json::Value>,
+) -> (StatusCode, String, String) {
+    let mut request = Request::builder().method("POST").uri(uri);
+    if let Some(cookie) = cookie {
+        request = request.header("cookie", cookie);
+    }
+    if let Some(proto) = forwarded_proto {
+        request = request.header("x-forwarded-proto", proto);
+    }
+    let request = match body {
+        Some(body) => request
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap(),
+        None => request.body(Body::empty()).unwrap(),
+    };
+    let response = app.oneshot(request).await.unwrap();
+    let status = response.status();
+    let set_cookie = response
+        .headers()
+        .get(header::SET_COOKIE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .to_string();
+    let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024)
+        .await
+        .unwrap();
+    (
+        status,
+        set_cookie,
+        String::from_utf8_lossy(&bytes).to_string(),
+    )
+}
+
+/// THE security property of the whole flow: the long-lived refresh token
+/// never reaches the page. It leaves this server only as an HttpOnly
+/// cookie, so an XSS can spend the id_token already running and cannot
+/// mint itself another session.
+///
+/// And the usability property it buys: an expired id_token no longer
+/// means a new login — the refresh route spends the cookie and rotates
+/// it.
+#[tokio::test]
+async fn the_refresh_token_leaves_only_as_an_httponly_cookie() {
+    let issuer = mock_issuer().await;
+
+    // Nothing to renew before anyone has logged in, and saying so with
+    // 401 rather than 400 is what stops the browser from retrying.
+    let (status, _, _) = post_oidc(
+        app_against(&issuer, None),
+        "/admin/api/oidc/refresh",
+        None,
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    // The login. The issuer returns a refresh token; the browser must not.
+    let (status, cookie, body) = post_oidc(
+        app_against(&issuer, None),
+        "/admin/api/oidc/token",
+        None,
+        None,
+        Some(serde_json::json!({
+            "code": "c",
+            "code_verifier": "v",
+            "redirect_uri": "http://admin.test/admin",
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(
+        !body.contains("refresh_token") && !body.contains("r1"),
+        "the refresh token reached the page: {body}"
+    );
+    assert!(body.contains("idt1"), "{body}");
+    for attribute in [
+        "postbud_admin_refresh=r1",
+        "HttpOnly",
+        "SameSite=Strict",
+        // Only the two routes that spend it ever see it.
+        "Path=/admin/api/oidc",
+        "Max-Age=43200",
+    ] {
+        assert!(cookie.contains(attribute), "{attribute} missing: {cookie}");
+    }
+    // Plain HTTP on a private network is a legitimate deployment here,
+    // and a Secure cookie would never be stored — nobody could log in.
+    assert!(!cookie.contains("Secure"), "{cookie}");
+
+    // Twelve hours later: the cookie buys a new id_token, and ROTATES.
+    let (status, rotated, body) = post_oidc(
+        app_against(&issuer, None),
+        "/admin/api/oidc/refresh",
+        Some("postbud_admin_refresh=r1"),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body.contains("idt2"), "{body}");
+    assert!(!body.contains("refresh_token"), "{body}");
+    assert!(
+        rotated.contains("postbud_admin_refresh=r2"),
+        "the replacement must reach the browser, or the session dies \
+         when the id_token expires with nothing in any log to say why: {rotated}"
+    );
+
+    // Spending the same token twice is what two tabs racing does. The
+    // issuer refuses it, and its own detail stays server-side.
+    let (status, _, body) = post_oidc(
+        app_against(&issuer, None),
+        "/admin/api/oidc/refresh",
+        Some("postbud_admin_refresh=r1"),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(!body.contains("invalid_grant"), "{body}");
+    assert!(!body.contains("already used"), "{body}");
+    assert!(!body.contains("r1"), "{body}");
+
+    // Logout drops the cookie. Without this the next visit on a shared
+    // machine signs the previous user back in.
+    let (status, cookie, _) = post_oidc(
+        app_against(&issuer, None),
+        "/admin/api/oidc/logout",
+        None,
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert!(cookie.contains("Max-Age=0"), "{cookie}");
+    assert!(cookie.contains("HttpOnly"), "{cookie}");
+}
+
+/// `Secure` is set when the request actually arrived over TLS, and only
+/// then. Unconditionally would be stronger — and would make login
+/// impossible on the plain-HTTP private-network deployment this service
+/// supports, because the browser would simply not store the cookie.
+#[tokio::test]
+async fn the_cookie_is_secure_exactly_when_the_request_was() {
+    let issuer = mock_issuer().await;
+    let login = serde_json::json!({
+        "code": "c",
+        "code_verifier": "v",
+        "redirect_uri": "https://admin.test/admin",
+    });
+    let (_, cookie, _) = post_oidc(
+        app_against(&issuer, None),
+        "/admin/api/oidc/token",
+        None,
+        Some("https"),
+        Some(login.clone()),
+    )
+    .await;
+    assert!(cookie.contains("Secure"), "{cookie}");
+
+    // A proxy that terminates TLS elsewhere and forwards plain http.
+    let (_, cookie, _) = post_oidc(
+        app_against(&issuer, None),
+        "/admin/api/oidc/token",
+        None,
+        Some("http"),
+        Some(login),
+    )
+    .await;
+    assert!(!cookie.contains("Secure"), "{cookie}");
+}
+
+/// The break-glass path is untouched: `ADMIN_TOKEN` is a static
+/// credential with no refresh behind it, so it must neither acquire a
+/// cookie nor be logged out by any of the above. A session with it has
+/// no cookie, the refresh route answers 401, the browser does not retry,
+/// and the behaviour is exactly what it was before.
+#[tokio::test]
+async fn an_admin_token_session_has_no_cookie_and_is_not_logged_out() {
+    let issuer = mock_issuer().await;
+    let response = app_against(&issuer, Some("break-glass"))
+        .oneshot(
+            Request::builder()
+                .uri("/admin/api/overview")
+                .header(header::AUTHORIZATION, "Bearer break-glass")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    // 500 = the gate OPENED and the handler reached the dead database.
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(
+        response.headers().get(header::SET_COOKIE).is_none(),
+        "the break-glass path must not mint a session cookie"
+    );
+
+    // And asking to refresh it is an honest "there is no session here",
+    // not a retry-worthy failure.
+    let (status, cookie, _) = post_oidc(
+        app_against(&issuer, Some("break-glass")),
+        "/admin/api/oidc/refresh",
+        None,
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert!(cookie.is_empty(), "{cookie}");
+}

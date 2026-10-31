@@ -112,8 +112,15 @@ reputation checklist in [docs/dns.md](docs/dns.md).
   allowlist governs ONLY while the table is empty. Read endpoints take
   `Admin`, mutating ones `AdminWrite` — a viewer gets 403, and no
   handler can forget. Audit fields carry the actor's name. Neither
-  credential set = honest 503; half-set OIDC fails at startup. The UI
-  is Svelte 5 + daisyUI in `ui/admin/`, dist CHECKED IN and embedded via
+  credential set = honest 503; half-set OIDC fails at startup. The
+  issuer's rotating refresh token is KEPT by the token proxy and returned
+  as an HttpOnly cookie (`Path=/admin/api/oidc`, 12h) -- never to
+  JavaScript, in no storage: a store swap changes nothing about XSS
+  exposure, only the LIFETIME of what an XSS wins. `Secure` is set when
+  the request arrived over TLS and not otherwise, deliberately weaker
+  than a hostname rule, because the admin is legitimately plain HTTP on a
+  private network and a Secure cookie would never be stored at all. The
+  UI is Svelte 5 + daisyUI in `ui/admin/`, dist CHECKED IN and embedded via
   include_dir (cargo never needs node); rebuild with
   `scripts/build-ui.sh`, CI fails when dist drifts from source. Key
   rotation kills the old key atomically.
