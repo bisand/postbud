@@ -185,6 +185,12 @@ impl OidcAdmin {
     /// empty, the env allowlist), never here. Any failure is one error
     /// kind — a caller probing the gate learns nothing about which check
     /// refused them.
+    //
+    // Which is exactly what clippy::result_unit_err asks us to replace
+    // with a real error type. Here the absence of detail IS the feature:
+    // every refusal must be indistinguishable to the caller, so there is
+    // nothing for an error type to carry.
+    #[allow(clippy::result_unit_err)]
     pub async fn verify(&self, token: &str) -> Result<Identity, ()> {
         let header = decode_header(token).map_err(|_| ())?;
         let kid = header.kid.ok_or(())?;
