@@ -41,18 +41,15 @@ let refreshing = null;
 // there is no session to save; then, and only then, does the user log in
 // again.
 //
-// shortcut: INERT against the issuer this is deployed with. Measured
-// 2026-10-31: its refresh grant answers 200 with access_token,
-// expires_in, scope and token_type and NO id_token -- which is the
-// credential postbud authenticates with -- so every refresh here fails
-// at the check below and the user still meets the login gate. The same
-// answer carries no replacement refresh token either, and the token is
-// reusable, so the rotation handling (the 400 retry, the rotated cookie
-// server-side) is untested against reality: rotation happens on the
-// authorization_code grant, not this one. Upgrade when the issuer
-// reissues an id_token from the refresh grant, after which nothing here
-// needs changing; the alternative is authenticating API calls with the
-// access token, which means validating those server-side.
+// shortcut: inert until the issuer deploys the other half. Measured
+// 2026-10-31: its refresh grant answered 200 with access_token,
+// expires_in, scope and token_type and NO id_token -- the credential
+// postbud authenticates with -- so every refresh failed at the check
+// below and the user still met the login gate. The issuer side is
+// written (it now reissues an id_token from that grant) and this works
+// unchanged once that is released; nothing here needs altering. The
+// issuer does rotate on refresh, so the replacement cookie and the 400
+// retry are live paths, not speculation.
 export function refreshSession() {
   if (refreshing) return refreshing;
   refreshing = (async () => {

@@ -316,26 +316,31 @@ tailnet, not TLS, is the confidentiality boundary: a deployment
 property, not an oversight. Serving the admin over TLS (below) gets the
 stronger flag automatically.
 
-**Inert against the issuer currently configured.** Measured 2026-10-31:
-that issuer's refresh grant answers 200 with `access_token`,
-`expires_in`, `scope` and `token_type` and no `id_token` — and the
-id_token is what postbud authenticates API calls with, so a refresh
-returns nothing usable, the boot refresh gets its 200 and the login gate
-appears anyway. `scope` already comes back as `openid profile email`, so
-this is not a missing scope on the request. The same answer carries no
-replacement refresh token, and the token is reusable, so this issuer does
-not rotate on the refresh grant either — rotation is on the
-`authorization_code` grant, one per login — which leaves the rotated
-cookie and the browser's 400 retry correct but unexercised. The fix
-belongs at the issuer: reissue an `id_token` from the refresh grant and
-this works as described with no change here. Authenticating with the
-access token instead would mean validating access tokens server-side,
-which is a larger change than this.
+**Inert until the issuer deploys its half.** Measured 2026-10-31: that
+issuer's refresh grant answered 200 with `access_token`, `expires_in`,
+`scope` and `token_type` and no `id_token` — and the id_token is what
+postbud authenticates API calls with, so a refresh returned nothing
+usable, the boot refresh got its 200 and the login gate appeared anyway.
+`scope` already comes back as `openid profile email`, so this was never a
+missing scope on the request; that issuer simply did not mint an
+id_token on that grant. The fix is there, not here, and is written: an
+`openid` refresh now reissues an `id_token`, after which everything
+described above works with no change on this side. Authenticating with
+the access token instead would mean validating access tokens
+server-side, a larger change than this one.
 
-Until then the deployed state keeps the cookie half and costs a reload:
-nothing is stored in the page, so reloading signs the operator out, where
-the previous `sessionStorage` behaviour survived it. That is a knowing
-trade, not an oversight.
+The issuer **does** rotate on the refresh grant — it revokes the token
+presented and returns its replacement — so the rotated cookie here and
+the browser's 400 retry are live paths rather than speculation. Worth
+stating because the replacement is invisible from the page by design: it
+leaves only in `Set-Cookie`, never in the body, so spending the cookie
+repeatedly from JavaScript looks exactly like a non-rotating issuer. It
+is the cookie jar carrying each new value.
+
+Until the issuer ships, the deployed state keeps the cookie half and
+costs a reload: nothing is stored in the page, so reloading signs the
+operator out, where the previous `sessionStorage` behaviour survived it.
+That is a knowing trade, not an oversight.
 
 Two further honest limits. The issuer's `end_session` does not revoke the
 refresh token, so a token already stolen dies when it expires; clearing
